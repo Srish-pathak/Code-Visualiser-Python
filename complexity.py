@@ -5,7 +5,7 @@ from radon.metrics import mi_visit
 def analyze_complexity(code: str, language: str):
     if language == "Python":
         return _analyze_python(code)
-    return _analyze_heuristic(code)
+    return None
 
 def _analyze_python(code: str):
     try:

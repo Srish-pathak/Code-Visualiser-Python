@@ -23,6 +23,13 @@ SUPPORTED_EXTENSIONS = {
     ".cxx": "C++",
     ".hpp": "C++",
     ".h": "C++",
+    ".js": "JavaScript",
+    ".jsx": "JSX",
+    ".ts": "TypeScript",
+    ".tsx": "TSX",
+    ".html": "HTML",
+    ".css": "CSS",
+    ".scss": "SCSS",
 }
 EXCLUDED_DIRECTORIES = {
     ".git", ".venv", "venv", "env", "__pycache__", "node_modules",
@@ -58,10 +65,34 @@ def parse_github_url(repository_url):
 
     branch = None
     if len(parts) >= 4 and parts[2] == "tree":
-        branch = parts[3]
+        branch = _resolve_url_branch(owner, repository, parts[3:])
     elif len(parts) >= 4 and parts[2] == "blob":
-        branch = parts[3]
+        branch = _resolve_url_branch(owner, repository, parts[3:])
     return owner, repository, branch
+
+
+def _resolve_url_branch(owner, repository, path_parts):
+    """Resolve GitHub's ambiguous branch/path suffix to the longest branch name."""
+    if len(path_parts) == 1:
+        return path_parts[0]
+
+    for length in range(len(path_parts), 0, -1):
+        candidate = "/".join(path_parts[:length])
+        endpoint = "{}/repos/{}/{}/git/ref/heads/{}".format(
+            API_ROOT,
+            quote(owner, safe=""),
+            quote(repository, safe=""),
+            quote(candidate, safe="/"),
+        )
+        try:
+            _github_get(endpoint)
+        except GitHubFetchError:
+            continue
+        return candidate
+
+    # If GitHub cannot be reached or the URL does not name an existing branch,
+    # preserve the previous behavior and pass the full suffix through as the ref.
+    return "/".join(path_parts)
 
 
 def _github_get(url):

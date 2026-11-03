@@ -47,6 +47,13 @@ placeholder_code = {
     "Python": "def add(a, b):\n    return a+b\n",
     "C++": "int add(int a, int b) {\n    return a+b;\n}\n",
     "Java": "int add(int a, int b) {\n    return a+b;\n}\n",
+    "JavaScript": "function add(a, b) {\n    return a + b;\n}\n",
+    "JSX": "function Greeting({ name }) {\n    return <h1>Hello, {name}</h1>;\n}\n",
+    "TypeScript": "function add(a: number, b: number): number {\n    return a + b;\n}\n",
+    "TSX": "function Greeting({ name }: { name: string }) {\n    return <h1>Hello, {name}</h1>;\n}\n",
+    "HTML": "<main>\n    <h1>Hello</h1>\n</main>\n",
+    "CSS": "main {\n    color: navy;\n}\n",
+    "SCSS": "$primary: navy;\n\nmain {\n    color: $primary;\n}\n",
 }[language]
 
 if HAS_ACE:
@@ -76,7 +83,10 @@ if run_clicked:
     else:
         with st.spinner("AI is reviewing your code..."):
             st.session_state.review_result = review_code(code_input, language)
-            st.session_state.complexity_result = analyze_complexity(code_input, language)
+            if LANGUAGE_CONFIG[language]["supports_radon"]:
+                st.session_state.complexity_result = analyze_complexity(code_input, language)
+            else:
+                st.session_state.complexity_result = None
 
 
 # ---------- Manual review results ----------
