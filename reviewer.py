@@ -5,7 +5,7 @@ from syntax_checker import check_syntax
 from static_analysis import analyze_static
 from complexity import analyze_complexity
 
-MODEL_NAME = "gemini-3.5-flash"
+MODEL_NAME = "gemini-3.8-flash"
 
 SYSTEM_PROMPT = """
 You are a senior software engineer performing a code review.
