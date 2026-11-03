@@ -1,4 +1,32 @@
 
+# 🔍 Tech Spec Analyser
+
+Tech Spec Analyser is an AI-powered repository and code analysis platform built with Streamlit. It supports manual code review and public GitHub repository analysis, combining Gemini-powered AI reviews with syntax, static, and complexity analysis.
+
+## Features
+
+- Manual code review for Python, C++, Java, JavaScript, JSX, TypeScript, TSX, HTML, CSS, and SCSS
+- Gemini API integration for code summaries, bug reports, improvement suggestions, overall scores, and improved code
+- Syntax validation and static-analysis checks, including supported-language linting and Python AST checks
+- Cyclomatic complexity and maintainability analysis for Python
+- Public GitHub repository fetching, including branch and source-folder URL support
+- Repository-wide file review with per-file findings, complexity, scores, bugs, and improvement recommendations
+- Interactive Streamlit dashboard with configurable analysis settings
+
+## Gemini configuration
+
+Set a Gemini API key in the environment before starting the application locally:
+
+```bash
+export GEMINI_API_KEY="your-api-key"
+```
+
+For Streamlit Community Cloud, add the following to your app's Streamlit secrets:
+
+```toml
+GEMINI_API_KEY = "your-api-key"
+```
+
 ---
 
 # ✨ Features

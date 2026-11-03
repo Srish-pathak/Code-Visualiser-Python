@@ -16,10 +16,10 @@ try:
 except ImportError:
     HAS_ACE = False
 
-st.set_page_config(page_title="AI Code Reviewer", page_icon="🔍", layout="wide")
+st.set_page_config(page_title="Tech Spec Analyser", page_icon="🔍", layout="wide")
 
-st.title("🔍 AI Code Reviewer")
-st.caption("Paste your code, get instant AI feedback — bugs, improvements, and a complexity score.")
+st.title("🔍 Tech Spec Analyser")
+st.caption("AI-Powered Repository and Code Analysis Platform")
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -32,7 +32,7 @@ with st.sidebar:
         "3. Get bugs, suggestions, complexity & a score"
     )
     st.markdown("---")
-    st.caption("Requires `GEMINI_API_KEY` set as an environment variable.")
+    st.caption("Requires `GEMINI_API_KEY` set as an environment variable or Streamlit secret.")
 
 if "review_result" not in st.session_state:
     st.session_state.review_result = None
@@ -178,9 +178,9 @@ else:
 
 # ---------- GitHub repository review ----------
 st.markdown("---")
-st.subheader("🐙 GitHub Repository Code Review")
+st.subheader("🐙 Tech Spec Analyser – GitHub Repository Analysis")
 st.caption(
-    "Review supported source files from a public GitHub repository. "
+    "Analyse supported source files from a public GitHub repository. "
     "Files are sent to Gemini for analysis; do not submit code you are not permitted to share."
 )
 repository_url = st.text_input(
