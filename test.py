@@ -1,6 +1,12 @@
 from google import genai
 
-client = genai.Client(api_key="")
 
-for model in client.models.list():
-    print(model.name)
+def main():
+    client = genai.Client(api_key=None)
+
+    for model in client.models.list():
+        print(model.name)
+
+
+if __name__ == "__main__":
+    main()
