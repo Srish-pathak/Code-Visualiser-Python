@@ -1,6 +1,7 @@
 import streamlit as st
-from reviewer import review_code
+from reviewer import review_code, review_repo_files
 from complexity import analyze_complexity
+from github_fetcher import GitHubFetchError, fetch_public_repository
 from utils import (
     LANGUAGE_CONFIG,
     score_color,
@@ -33,11 +34,12 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Requires `GEMINI_API_KEY` set as an environment variable.")
 
-#session
 if "review_result" not in st.session_state:
     st.session_state.review_result = None
 if "complexity_result" not in st.session_state:
     st.session_state.complexity_result = None
+if "repository_result" not in st.session_state:
+    st.session_state.repository_result = None
 
 st.subheader("Your Code")
 
@@ -77,7 +79,7 @@ if run_clicked:
             st.session_state.complexity_result = analyze_complexity(code_input, language)
 
 
-# ---------- Results ----------
+# ---------- Manual review results ----------
 result = st.session_state.review_result
 complexity = st.session_state.complexity_result
 
@@ -95,17 +97,15 @@ if result:
             ["🐛 Bugs", "💡 Improvements", "⚙️ Complexity", "📊 Score", "🔀 Before/After"]
         )
 
-        # --- Bugs tab ---
         with tab_bugs:
             bugs = result.get("bugs", [])
             if not bugs:
                 st.success("No bugs found. Nice and clean! ✅")
             else:
                 for bug in bugs:
-                    with st.expander(f"Line {bug.get('line', 'N/A')} — {bug.get('severity', 'info').title()}"):
+                    with st.expander("Line {} — {}".format(bug.get("line", "N/A"), bug.get("severity", "info").title())):
                         st.markdown(format_bug_entry(bug))
 
-        # --- Improvements tab ---
         with tab_improve:
             improvements = result.get("improvements", [])
             if not improvements:
@@ -115,7 +115,6 @@ if result:
                     st.markdown(format_improvement_entry(item))
                     st.markdown("")
 
-        # --- Complexity tab ---
         with tab_complexity:
             if complexity:
                 c1, c2, c3 = st.columns(3)
@@ -135,13 +134,12 @@ if result:
 
             st.caption(result.get("complexity_notes", ""))
 
-        # --- Score tab ---
         with tab_score:
             score = result.get("overall_score", 0)
             color = score_color(score)
             label = score_label(score)
 
-            st.markdown(f"### Overall Code Health: **{score}/10** — {label}")
+            st.markdown("### Overall Code Health: **{}/10** — {}".format(score, label))
             st.progress(min(max(score / 10, 0), 1.0))
 
             if color == "green":
@@ -151,7 +149,6 @@ if result:
             else:
                 st.error("This code needs significant work.")
 
-        # --- Before / After tab ---
         with tab_diff:
             improved = result.get("improved_code", "")
             if improved:
@@ -167,3 +164,170 @@ if result:
 else:
     st.markdown("---")
     st.caption("Paste your code above and click **Review My Code** to get started.")
+
+
+# ---------- GitHub repository review ----------
+st.markdown("---")
+st.subheader("🐙 GitHub Repository Code Review")
+st.caption(
+    "Review supported source files from a public GitHub repository. "
+    "Files are sent to Gemini for analysis; do not submit code you are not permitted to share."
+)
+repository_url = st.text_input(
+    "Public GitHub repository URL",
+    placeholder="https://github.com/owner/repository",
+    key="repository_url",
+)
+if st.button("Analyze Repository", type="primary", key="analyze_repository"):
+    if not repository_url.strip():
+        st.warning("Enter a public GitHub repository URL first.")
+    else:
+        try:
+            with st.spinner("Fetching repository metadata and source files from GitHub..."):
+                repository_data = fetch_public_repository(repository_url)
+            if not repository_data["files"]:
+                st.session_state.repository_result = None
+                st.warning("No supported, readable source files were found in this repository.")
+            else:
+                progress_bar = st.progress(0.0, text="Preparing file reviews...")
+                status_text = st.empty()
+
+                def update_review_progress(completed, total, current_path):
+                    progress_bar.progress(completed / total, text="Reviewing {}/{} files".format(completed, total))
+                    status_text.caption("Currently reviewing: {}".format(current_path))
+
+                with st.spinner("Gemini is reviewing repository files..."):
+                    review_data = review_repo_files(repository_data["files"], update_review_progress)
+                progress_bar.empty()
+                status_text.empty()
+                st.session_state.repository_result = {
+                    "repository": repository_data,
+                    "review": review_data,
+                }
+        except GitHubFetchError as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.error("Repository review could not be completed: {}".format(exc))
+
+repo_result = st.session_state.repository_result
+if repo_result:
+    repository_data = repo_result["repository"]
+    review_data = repo_result["review"]
+    st.markdown("---")
+    st.markdown("### [{}]({}) — `{}`".format(
+        repository_data["full_name"], repository_data["html_url"], repository_data["branch"]
+    ))
+    if repository_data.get("description"):
+        st.write(repository_data["description"])
+
+    dashboard = st.columns(5)
+    dashboard[0].metric("Source files detected", repository_data["source_files_detected"])
+    dashboard[1].metric("Files reviewed", review_data["files_reviewed"])
+    dashboard[2].metric("Critical bugs", review_data["critical_bugs"])
+    dashboard[3].metric("Warnings", review_data["warnings"])
+    dashboard[4].metric(
+        "Repository quality",
+        "{}/10".format(review_data["overall_score"]) if review_data["overall_score"] is not None else "N/A",
+    )
+
+    if repository_data.get("files_limited"):
+        st.info("Review is capped at 30 files. Narrow the repository or review a smaller project for complete coverage.")
+    if repository_data.get("tree_truncated"):
+        st.warning("GitHub returned a truncated file tree; the detected file count may be incomplete.")
+    if review_data.get("failed_files"):
+        st.warning("{} file(s) could not be reviewed by Gemini; other file results are available below.".format(review_data["failed_files"]))
+    if repository_data.get("fetch_errors"):
+        with st.expander("Files skipped during download ({})".format(len(repository_data["fetch_errors"]))):
+            for item in repository_data["fetch_errors"]:
+                st.write("**{}** — {}".format(item["path"], item["error"]))
+
+    if review_data["overall_score"] is not None:
+        score = review_data["overall_score"]
+        color = score_color(score)
+        if color == "green":
+            st.success("Average quality score: {}/10 — {}".format(score, score_label(score)))
+        elif color == "orange":
+            st.warning("Average quality score: {}/10 — {}".format(score, score_label(score)))
+        else:
+            st.error("Average quality score: {}/10 — {}".format(score, score_label(score)))
+
+    st.markdown("#### Repository findings")
+    all_bugs = []
+    all_improvements = []
+    for file_result in review_data["file_results"]:
+        for bug in file_result["review"].get("bugs", []):
+            if isinstance(bug, dict):
+                all_bugs.append((file_result["path"], bug))
+        for improvement in file_result["review"].get("improvements", []):
+            if isinstance(improvement, dict):
+                all_improvements.append((file_result["path"], improvement))
+
+    findings_tab, improvements_tab, files_tab = st.tabs(["🐛 Bugs & security", "💡 Improvements", "📁 File-wise analysis"])
+    with findings_tab:
+        if not all_bugs:
+            st.success("No bugs were reported in the reviewed files.")
+        else:
+            for path, bug in all_bugs:
+                with st.expander("{} — Line {} — {}".format(
+                    path, bug.get("line", "N/A"), str(bug.get("severity", "info")).title()
+                )):
+                    st.markdown(format_bug_entry(bug))
+                    description = str(bug.get("description", "")).lower()
+                    if any(term in description for term in ("security", "injection", "credential", "authentication", "authorization", "permission", "xss", "secret")):
+                        st.caption("Potential security-related finding (based on the review description).")
+    with improvements_tab:
+        if not all_improvements:
+            st.info("No improvement suggestions were returned.")
+        else:
+            for path, improvement in all_improvements:
+                st.markdown("**{}**".format(path))
+                st.markdown(format_improvement_entry(improvement))
+                st.markdown("")
+
+    with files_tab:
+        file_results = review_data["file_results"]
+        selected_path = st.selectbox("Select a reviewed file", [item["path"] for item in file_results])
+        selected = next(item for item in file_results if item["path"] == selected_path)
+        st.caption("Language: {}".format(selected["language"]))
+        st.markdown("**Source code**")
+        st.code(selected["content"], language=selected["language"].lower())
+
+        per_file_review = selected["review"]
+        st.markdown("**Review summary**")
+        st.write(per_file_review.get("summary") or "No summary returned.")
+        st.markdown("**Bugs and potential security findings**")
+        if per_file_review.get("bugs"):
+            for bug in per_file_review["bugs"]:
+                if isinstance(bug, dict):
+                    st.markdown(format_bug_entry(bug))
+        else:
+            st.write("No bugs reported.")
+        st.markdown("**Improvements and AI suggestions**")
+        if per_file_review.get("improvements"):
+            for suggestion in per_file_review["improvements"]:
+                if isinstance(suggestion, dict):
+                    st.markdown(format_improvement_entry(suggestion))
+        else:
+            st.write("No improvement suggestions returned.")
+        st.markdown("**Complexity analysis**")
+        file_complexity = selected.get("complexity")
+        if selected["language"] != "Python":
+            st.info("Complexity analysis is not available for this language in repository review.")
+        elif not file_complexity:
+            st.info("Complexity analysis was not available.")
+        else:
+            if file_complexity.get("error"):
+                st.warning(file_complexity["error"])
+            else:
+                cc1, cc2, cc3 = st.columns(3)
+                cc1.metric("Method", file_complexity.get("method", "N/A").title())
+                cc2.metric("Average complexity", file_complexity.get("average_complexity", "N/A"))
+                cc3.metric("Rating", file_complexity.get("rating", "N/A"))
+                if file_complexity.get("maintainability_index") is not None:
+                    st.metric("Maintainability index", file_complexity["maintainability_index"])
+                if file_complexity.get("details"):
+                    st.table(file_complexity["details"])
+        improved_code = per_file_review.get("improved_code", "")
+        if improved_code:
+            with st.expander("AI-generated improved version"):
+                st.code(improved_code, language=selected["language"].lower())
