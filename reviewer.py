@@ -51,12 +51,24 @@ Rules
 
 import os
 
+import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
+
 
 def get_client():
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-        raise EnvironmentError("GEMINI_API_KEY not found.")
+        try:
+            api_key = st.secrets.get("GEMINI_API_KEY")
+        except (KeyError, StreamlitSecretNotFoundError):
+            api_key = None
+
+    if not api_key:
+        raise EnvironmentError(
+            "GEMINI_API_KEY not found. Set it as an environment variable "
+            "or in Streamlit secrets."
+        )
 
     return genai.Client(api_key=api_key)
 
