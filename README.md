@@ -54,7 +54,11 @@ flowchart LR
     JSON --> S
 ```
 
-Provider selection is automatic: DeepSeek is selected when `DEEPSEEK_API_KEY` is present or `AI_PROVIDER=deepseek` is configured; Gemini is selected otherwise, unless `AI_PROVIDER=gemini` is set. Gemini can still use Streamlit secrets; DeepSeek is read from `DEEPSEEK_API_KEY` only.
+The sidebar can explicitly select DeepSeek or Gemini. Provider selection also follows
+`AI_PROVIDER=deepseek|gemini`. If neither provider is explicitly selected, DeepSeek
+is preferred when a `DEEPSEEK_API_KEY` is available and Gemini is otherwise used.
+Credentials can be supplied by environment variables locally or Streamlit secrets in
+deployment.
 
 ## Technology Stack
 
@@ -111,8 +115,9 @@ Gemini uses the Google Gen AI client, `gemini-2.5-flash`, `GEMINI_API_KEY`, and 
 DeepSeek uses the official OpenAI-compatible client with:
 
 - Base URL: `https://api.deepseek.com`
-- Model: `deepseek-chat`
+- Model: `deepseek-flash` (current official default model)
 - Environment variable: `DEEPSEEK_API_KEY`
+- Optional environment override: `DEEPSEEK_MODEL=deepseek-flash`
 - JSON-object response mode
 
 No provider key is read from application source, logs, or returned UI messages.
@@ -194,6 +199,25 @@ GEMINI_API_KEY = "your-key"
 ```
 
 Do not commit real keys, `.env` files, or Streamlit secrets.
+
+### Streamlit Community Cloud
+
+In the application settings, add these secrets under **Secrets**:
+
+```toml
+DEEPSEEK_API_KEY = "your-key"
+AI_PROVIDER = "deepseek"
+```
+
+For optional Gemini fallback:
+
+```toml
+GEMINI_API_KEY = "your-key"
+AUTO_AI_FALLBACK = true
+```
+
+The Streamlit sidebar also lets the user select the primary provider. Automatic
+fallback is shown only when it is enabled.
 
 ## Running the Application
 

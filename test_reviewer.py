@@ -161,10 +161,11 @@ def test_successful_deepseek_review(monkeypatch):
 
 def test_deepseek_missing_key_is_unavailable(monkeypatch):
     monkeypatch.setenv("AI_PROVIDER", "deepseek")
-    result = review_code("print(1)\n", "Python")
+    with patch("reviewer.st.secrets", {}):
+        result = review_code("print(1)\n", "Python")
 
     assert result["analysis_status"]["static"] == "completed"
-    assert result["analysis_status"]["ai"] == "invalid_api_key"
+    assert result["analysis_status"]["ai"] == "missing_configuration"
     assert result["summary"].startswith("AI Review Unavailable")
 
 
@@ -194,6 +195,83 @@ def test_deepseek_invalid_api_key_is_unavailable(monkeypatch):
         result = review_code("print(1)\n", "Python")
 
     assert result["analysis_status"]["ai"] == "invalid_api_key"
+
+
+def test_deepseek_request_parameters_and_response_schema(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    calls = {}
+
+    def create(**kwargs):
+        calls.update(kwargs)
+        content = (
+            '{"summary":"Reviewed","bugs":[{"line":1,"severity":"warning",'
+            '"description":"Improve it"}],"improvements":[{"title":"Rename",'
+            '"detail":"Use a clearer name"}],"complexity_notes":"Low complexity",'
+            '"overall_score":7,"improved_code":"print(2)"}'
+        )
+        message = SimpleNamespace(content=content)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+    with patch("reviewer.get_deepseek_client", return_value=client):
+        result = review_code("print(1)\n", "Python")
+
+    assert calls["model"] == "deepseek-flash"
+    assert calls["response_format"] == {"type": "json_object"}
+    assert calls["max_tokens"] == 4000
+    assert result["summary"] == "Reviewed"
+    assert result["bugs"]
+    assert result["improvements"]
+    assert result["complexity_notes"] == "Low complexity"
+    assert result["overall_score"] == 7
+    assert result["improved_code"] == "print(2)"
+
+
+def test_deepseek_insufficient_balance_is_distinct(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+
+    def fail(**kwargs):
+        raise RuntimeError("402 insufficient balance")
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fail))
+    )
+    with patch("reviewer.get_deepseek_client", return_value=client):
+        result = review_code("print(1)\n", "Python")
+
+    assert result["analysis_status"]["ai"] == "insufficient_balance"
+
+
+def test_deepseek_timeout_is_distinct(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+
+    def fail(**kwargs):
+        raise TimeoutError("DeepSeek request timed out")
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fail))
+    )
+    with patch("reviewer.get_deepseek_client", return_value=client):
+        result = review_code("print(1)\n", "Python")
+
+    assert result["analysis_status"]["ai"] == "timeout"
+
+
+def test_explicit_gemini_fallback(monkeypatch):
+    monkeypatch.setenv("AUTO_AI_FALLBACK", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    gemini_result = (
+        '{"summary":"Gemini fallback","bugs":[],"improvements":[],"complexity_notes":"Simple",'
+        '"overall_score":8,"improved_code":"print(1)"}'
+    )
+
+    with patch("reviewer._call_ai", side_effect=["", gemini_result]):
+        result = review_code("print(1)\n", "Python", provider="deepseek")
+
+    assert result["provider_used"] == "Gemini fallback"
+    assert result["summary"] == "Gemini fallback"
 
 
 @pytest.mark.parametrize(

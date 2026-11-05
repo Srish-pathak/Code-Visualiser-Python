@@ -33,6 +33,17 @@ st.caption("AI-Powered Repository and Code Analysis Platform")
 with st.sidebar:
     st.header("⚙️ Settings")
     language = st.selectbox("Language", list(LANGUAGE_CONFIG.keys()))
+    ai_provider = st.selectbox(
+        "AI provider",
+        ["DeepSeek", "Gemini"],
+        index=0,
+        help="Provider selection is sent explicitly for this review.",
+    )
+    enable_fallback = st.checkbox(
+        "Automatically fall back to Gemini",
+        value=False,
+        disabled=ai_provider != "DeepSeek",
+    )
     st.markdown("---")
     st.markdown(
         "**How it works**\n\n"
@@ -87,7 +98,15 @@ if run_clicked:
         st.warning("Please paste some code first.")
     else:
         with st.spinner("AI is reviewing your code..."):
-            st.session_state.review_result = review_code(code_input, language)
+            import os
+
+            os.environ["AUTO_AI_FALLBACK"] = "true" if enable_fallback else "false"
+            st.session_state.review_result = review_code(
+                code_input,
+                language,
+                "<input>",
+                ai_provider.lower(),
+            )
             if LANGUAGE_CONFIG[language]["supports_radon"]:
                 st.session_state.complexity_result = analyze_complexity(code_input, language)
             else:
@@ -218,7 +237,11 @@ if st.button("Analyze Repository", type="primary", key="analyze_repository"):
                     status_text.caption("Currently reviewing: {}".format(current_path))
 
                 with st.spinner("TechSpecAnalyser is reviewing your code..."):
-                    review_data = review_repo_files(repository_data["files"], update_review_progress)
+                    review_data = review_repo_files(
+                        repository_data["files"],
+                        update_review_progress,
+                        ai_provider.lower(),
+                    )
                 progress_bar.empty()
                 status_text.empty()
                 st.session_state.repository_result = {
