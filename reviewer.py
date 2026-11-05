@@ -6,12 +6,19 @@ import streamlit as st
 from google import genai
 from streamlit.errors import StreamlitSecretNotFoundError
 
+try:
+    from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
+except ImportError:
+    APIConnectionError = APIStatusError = APITimeoutError = OpenAI = None
+
 from complexity import analyze_complexity
 from static_analysis import analyze_static
 from syntax_checker import check_syntax
 from utils import safe_json_parse
 
 MODEL_NAME = "gemini-2.5-flash"
+DEEPSEEK_MODEL_NAME = "deepseek-chat"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 SYSTEM_PROMPT = """
 You are a senior software engineer performing a code review.
@@ -72,27 +79,137 @@ def get_client() -> genai.Client:
     return genai.Client(api_key=api_key)
 
 
-def _gemini_error_message(exc: Exception) -> tuple[str, str]:
-    """Return a safe, user-facing message and status for Gemini failures."""
+def get_deepseek_client() -> Any:
+    """Create an OpenAI-compatible client configured for DeepSeek."""
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise EnvironmentError(
+            "DEEPSEEK_API_KEY not found. Set it as an environment variable."
+        )
+    if OpenAI is None:
+        raise ImportError("The openai package is required for DeepSeek reviews.")
+
+    return OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+
+
+def _selected_ai_provider() -> str:
+    """Select an explicitly configured provider, defaulting to the available key."""
+    configured = os.getenv("AI_PROVIDER", "").strip().lower()
+    if configured in {"deepseek", "gemini"}:
+        return configured
+    if os.getenv("DEEPSEEK_API_KEY"):
+        return "deepseek"
+    return "gemini"
+
+
+def _provider_error_message(exc: Exception, provider: str) -> tuple[str, str]:
+    """Return a safe provider name, status, and message without exposing credentials."""
     text = "{} {}".format(type(exc).__name__, exc)
     lowered = text.lower()
-    code = getattr(exc, "code", None)
+    provider_name = "DeepSeek" if provider == "deepseek" else "Gemini"
     status_code = getattr(exc, "status_code", None)
-    status = str(code or status_code or "")
+    code = getattr(exc, "code", None)
+    status = str(status_code or code or "")
 
-    if "429" in text or status == "429" or "resource_exhausted" in lowered or "rate limit" in lowered:
-        return "Gemini rate limit reached (429). Static analysis is still available.", "rate_limited"
-    if "empty" in lowered and "response" in lowered or "incomplete response" in lowered or "could not parse model response" in lowered:
-        return "Gemini returned an invalid or incomplete response. Static analysis is still available.", "invalid_response"
-    if "401" in text or "403" in text or status in {"401", "403", "PERMISSION_DENIED"} or "permission_denied" in lowered:
-        return "Gemini access was denied (403). Check the API key and Gemini API permissions.", "permission_denied"
-    if "api key" in lowered or "api_key" in lowered or "invalid api" in lowered:
-        return "The configured Gemini API key is invalid. Static analysis is still available.", "invalid_api_key"
-    if "timeout" in lowered or "timed out" in lowered:
-        return "Gemini timed out while generating the review. Static analysis is still available.", "timeout"
-    if isinstance(exc, (ConnectionError, TimeoutError)):
-        return "Could not connect to Gemini. Static analysis is still available.", "network_error"
-    return "Gemini review is currently unavailable. Static analysis is still available.", "unavailable"
+    if (
+        "429" in text
+        or status == "429"
+        or "resource_exhausted" in lowered
+        or "rate limit" in lowered
+        or "quota" in lowered
+    ):
+        return (
+            "{} rate limit or quota reached. Static analysis is still available.".format(provider_name),
+            "rate_limited",
+        )
+    invalid_response = (
+        ("empty" in lowered and "response" in lowered)
+        or "incomplete response" in lowered
+        or "could not parse model response" in lowered
+    )
+    if invalid_response:
+        return (
+            "{} returned an invalid or incomplete response. Static analysis is still available.".format(provider_name),
+            "invalid_response",
+        )
+    if "invalid api key" in lowered:
+        return (
+            "The configured {} API key is invalid. Static analysis is still available.".format(provider_name),
+            "invalid_api_key",
+        )
+    if (
+        "401" in text
+        or "403" in text
+        or status in {"401", "403", "PERMISSION_DENIED"}
+        or "permission_denied" in lowered
+        or "authentication" in lowered
+        or "incorrect api key" in lowered
+    ):
+        return (
+            "{} access was denied. Check the API key and account permissions.".format(provider_name),
+            "permission_denied",
+        )
+    if (
+        ("api key" in lowered or "api_key" in lowered)
+        and "not found" in lowered
+    ):
+        return (
+            "{} API key is not configured. Static analysis is still available.".format(provider_name),
+            "invalid_api_key",
+        )
+    is_timeout = (
+        APITimeoutError is not None and isinstance(exc, APITimeoutError)
+    ) or isinstance(exc, TimeoutError)
+    if "timeout" in lowered or "timed out" in lowered or is_timeout:
+        return (
+            "{} timed out while generating the review. Static analysis is still available.".format(provider_name),
+            "timeout",
+        )
+    is_connection_error = (
+        APIConnectionError is not None
+        and isinstance(exc, APIConnectionError)
+    )
+    if isinstance(exc, ConnectionError) or is_connection_error:
+        return (
+            "Could not connect to {}. Static analysis is still available.".format(provider_name),
+            "network_error",
+        )
+    return (
+        "{} review is currently unavailable. Static analysis is still available.".format(provider_name),
+        "unavailable",
+    )
+
+
+def _call_ai(code: str, language: str, provider: str) -> str:
+    """Call the selected AI provider and return its response text."""
+    prompt = build_user_prompt(code, language)
+    if provider == "deepseek":
+        client = get_deepseek_client()
+        response = client.chat.completions.create(
+            model=DEEPSEEK_MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        )
+        try:
+            return response.choices[0].message.content or ""
+        except (AttributeError, IndexError, TypeError):
+            raise ValueError("DeepSeek returned an empty or incomplete response.")
+
+    client = get_client()
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt,
+        config={
+            "system_instruction": SYSTEM_PROMPT,
+            "temperature": 0.2,
+            "response_mime_type": "application/json",
+        },
+    )
+    return getattr(response, "text", None) or ""
 
 
 def build_user_prompt(code: str, language: str) -> str:
@@ -143,28 +260,21 @@ def review_code(code: str, language: str) -> dict[str, Any]:
     static_bugs = analyze_static(code, language)
     complexity = analyze_complexity(code, language) if language == "Python" else None
 
-    # Keep client creation inside the exception boundary: missing credentials and
-    # Gemini/network errors should become a normal review result, not a crash.
+    provider = _selected_ai_provider()
+    provider_name = "DeepSeek" if provider == "deepseek" else "Gemini"
+
+    # Provider failures are kept separate from static analysis so deterministic
+    # findings remain available even when the AI service is unavailable.
     try:
-        client = get_client()
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=build_user_prompt(code, language),
-            config={
-                "system_instruction": SYSTEM_PROMPT,
-                "temperature": 0.2,
-                "response_mime_type": "application/json",
-            },
-        )
-        response_text = getattr(response, "text", None)
+        response_text = _call_ai(code, language, provider)
         if not response_text:
-            raise ValueError("Gemini returned an empty or incomplete response.")
+            raise ValueError("{} returned an empty or incomplete response.".format(provider_name))
         ai_result = safe_json_parse(response_text)
         if ai_result.get("error"):
             raise ValueError(ai_result["summary"])
         result = ai_result
     except Exception as exc:
-        message, ai_status = _gemini_error_message(exc)
+        message, ai_status = _provider_error_message(exc, provider)
         return {
             "bugs": static_bugs,
             "improvements": [],
