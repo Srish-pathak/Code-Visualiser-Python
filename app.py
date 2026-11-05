@@ -1,6 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
-import json
 from reviewer import review_code, review_repo_files
 from complexity import analyze_complexity
 from github_fetcher import GitHubFetchError, fetch_public_repository
@@ -11,11 +9,16 @@ from utils import (
     format_bug_entry,
     format_improvement_entry,
 )
-from voice_assistant import (
-    build_review_context,
-    build_full_analysis,
-    generate_assistant_response,
-)
+
+DEFAULT_SESSION_STATE = {
+    "review_result": None,
+    "complexity_result": None,
+    "repository_result": None,
+}
+
+for key, default_value in DEFAULT_SESSION_STATE.items():
+    if key not in st.session_state:
+        st.session_state[key] = default_value
 
 try:
     from streamlit_ace import st_ace
@@ -27,47 +30,6 @@ st.set_page_config(page_title="Tech Spec Analyser", page_icon="🔍", layout="wi
 
 st.title("🔍 Tech Spec Analyser")
 st.caption("AI-Powered Repository and Code Analysis Platform")
-
-# ---------- Voice assistant ----------
-review_context = build_review_context(
-    review_result=st.session_state.review_result,
-    complexity_result=st.session_state.complexity_result,
-    repository_result=st.session_state.repository_result,
-)
-full_analysis = build_full_analysis(
-    review_result=st.session_state.review_result,
-    complexity_result=st.session_state.complexity_result,
-    repository_result=st.session_state.repository_result,
-)
-
-voice_event = components.html(
-    _voice_component_html(st.session_state.voice_answer, full_analysis),
-    height=38,
-    scrolling=False,
-)
-if (
-    isinstance(voice_event, dict)
-    and voice_event.get("type") == "question"
-    and isinstance(voice_event.get("text"), str)
-    and voice_event.get("request_id") != st.session_state.voice_processed_request
-):
-    request_id = voice_event["request_id"]
-    st.session_state.voice_processed_request = request_id
-    question = voice_event["text"].strip()
-    if question:
-        answer = generate_assistant_response(
-            question,
-            conversation_history=st.session_state.voice_chat_history[-8:],
-            review_context=review_context,
-        )
-        st.session_state.voice_chat_history.extend([
-            {"role": "user", "content": question},
-            {"role": "assistant", "content": answer},
-        ])
-        st.session_state.voice_chat_history = st.session_state.voice_chat_history[-16:]
-        st.session_state.voice_answer = answer
-        st.rerun()
-st.session_state.voice_answer = ""
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -81,127 +43,6 @@ with st.sidebar:
     )
     st.markdown("---")
     st.caption("Requires `GEMINI_API_KEY` set as an environment variable or Streamlit secret.")
-
-if "review_result" not in st.session_state:
-    st.session_state.review_result = None
-if "complexity_result" not in st.session_state:
-    st.session_state.complexity_result = None
-if "repository_result" not in st.session_state:
-    st.session_state.repository_result = None
-if "voice_chat_history" not in st.session_state:
-    st.session_state.voice_chat_history = []
-if "voice_answer" not in st.session_state:
-    st.session_state.voice_answer = ""
-if "voice_processed_request" not in st.session_state:
-    st.session_state.voice_processed_request = None
-
-
-def _voice_component_html(answer, full_analysis):
-    answer_json = json.dumps(answer, ensure_ascii=True).replace("</", "<\\/")
-    report_json = json.dumps(full_analysis, ensure_ascii=True).replace("</", "<\\/")
-    return """
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <script src="https://unpkg.com/streamlit-component-lib@2/dist/index.js"></script>
-  <style>
-    body { margin: 0; font-family: sans-serif; }
-    .voice-assistant { display: flex; align-items: center; gap: 8px; min-height: 38px; }
-    button { border: 1px solid #d0d7de; border-radius: 999px; background: white; color: #24292f;
-             cursor: pointer; min-height: 34px; padding: 7px 12px; }
-    button.primary { font-weight: 600; background: #fff; }
-    button.read { border-radius: 6px; font-size: 12px; color: #57606a; }
-    button:hover { background: #f6f8fa; }
-    button:disabled { cursor: not-allowed; opacity: .55; }
-    .status { color: #57606a; font-size: 12px; min-width: 84px; }
-    .mic { font-size: 16px; }
-  </style>
-</head>
-<body>
-  <div class="voice-assistant">
-    <button id="talk" class="primary" type="button"><span class="mic">🎤</span> Talk to TechSpec</button>
-    <button id="read" class="read" type="button">Read Full Analysis</button>
-    <span id="status" class="status" role="status">Ready</span>
-  </div>
-  <script>
-    const ANSWER = JSON.parse(%s);
-    const REPORT = JSON.parse(%s);
-    const Streamlit = window.Streamlit;
-    const statusElement = document.getElementById('status');
-    const talkButton = document.getElementById('talk');
-    const readButton = document.getElementById('read');
-    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recognition = null;
-
-    function setStatus(text) { statusElement.textContent = text; Streamlit.setFrameHeight(38); }
-    function speak(text) {
-      if (!('speechSynthesis' in window)) {
-        setStatus('Speech unavailable');
-        return;
-      }
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.onend = () => setStatus('Ready');
-      utterance.onerror = () => setStatus('Speech stopped');
-      setStatus('Speaking...');
-      window.speechSynthesis.speak(utterance);
-    }
-
-    readButton.addEventListener('click', () => {
-      if (!REPORT) { setStatus('No analysis'); return; }
-      speak(REPORT);
-    });
-
-    talkButton.addEventListener('click', () => {
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
-      if (!Recognition) {
-        setStatus('Speech recognition unsupported');
-        return;
-      }
-      if (recognition) { recognition.abort(); recognition = null; }
-      recognition = new Recognition();
-      recognition.lang = navigator.language || 'en-US';
-      recognition.interimResults = false;
-      recognition.continuous = false;
-      recognition.onstart = () => setStatus('Listening...');
-      recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript.trim();
-        if (!transcript) {
-          setStatus('Could not hear a question');
-          return;
-        }
-        setStatus('Thinking...');
-        Streamlit.setComponentValue({
-          type: 'question',
-          text: transcript,
-          request_id: String(Date.now()) + '-' + String(Math.random())
-        });
-      };
-      recognition.onerror = (event) => {
-        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          setStatus('Microphone permission denied');
-        } else if (event.error === 'no-speech') {
-          setStatus('No speech heard');
-        } else {
-          setStatus('Could not listen');
-        }
-      };
-      recognition.onend = () => {
-        if (statusElement.textContent === 'Listening...') setStatus('Ready');
-      };
-      recognition.start();
-    });
-
-    if (Streamlit) {
-      Streamlit.setComponentReady();
-      Streamlit.setFrameHeight(38);
-    }
-    if (ANSWER) speak(ANSWER);
-  </script>
-</body>
-</html>
-""" % (answer_json, report_json)
 
 st.subheader("Your Code")
 
@@ -252,8 +93,8 @@ if run_clicked:
 
 
 # ---------- Manual review results ----------
-result = st.session_state.review_result
-complexity = st.session_state.complexity_result
+result = st.session_state.get("review_result")
+complexity = st.session_state.get("complexity_result")
 
 if result:
     if result.get("error"):
@@ -381,7 +222,7 @@ if st.button("Analyze Repository", type="primary", key="analyze_repository"):
         except Exception as exc:
             st.error("Repository review could not be completed: {}".format(exc))
 
-repo_result = st.session_state.repository_result
+repo_result = st.session_state.get("repository_result")
 if repo_result:
     repository_data = repo_result["repository"]
     review_data = repo_result["review"]
