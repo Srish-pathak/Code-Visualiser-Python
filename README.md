@@ -1,227 +1,295 @@
-TechSpecAnalyser
-CodeLens AI
-AI-Assisted Static Analysis and Intelligent Code Review Platform
-Python
-Streamlit
-Google Gemini
-AST Analysis
-Radon
+# TechSpecAnalyser (CodeLens AI)
 
-Academic Engineering Project-I | Central University of Jharkhand
+### AI-Assisted Code Review & Static Analysis Platform
 
+**Analyze. Understand. Improve.**
 
+TechSpecAnalyser, also known as **CodeLens AI**, is an AI-assisted code review platform that combines traditional static analysis techniques with Generative AI to help developers identify potential code issues, understand complexity, and improve code quality.
 
+The platform supports individual source-code analysis as well as public GitHub repository analysis. It combines deterministic analysis with AI-generated suggestions to provide a more informative code-review experience.
 
+---
 
+## ✨ Key Features
 
+### 🔍 1. AI-Powered Code Review
+- Reviews submitted source code using the Gemini API.
+- Identifies potential bugs and code-quality concerns.
+- Generates improvement suggestions.
+- Provides explanations to help developers understand their code.
 
+### 🧠 2. Static Code Analysis
+- Uses Python AST to inspect Python source code.
+- Performs syntax validation.
+- Checks selected structural code patterns.
+- Provides deterministic analysis independent of the AI service.
 
+### 📊 3. Code Complexity Analysis
+- Integrates Radon for Python code metrics.
+- Calculates cyclomatic complexity.
+- Evaluates maintainability using the Maintainability Index.
+- Helps developers identify code that may need simplification.
 
-vibesec.app
+### 🐙 4. GitHub Repository Analysis
+- Accepts public GitHub repository URLs.
+- Fetches eligible source files from repositories.
+- Performs file-wise code analysis.
+- Displays review results for supported file types.
+- Applies file-count and file-size limits to keep analysis manageable.
 
+### 💡 5. Code Improvement Suggestions
+- Highlights potential issues.
+- Suggests cleaner coding approaches.
+- Provides AI-generated improved code where available.
+- Helps developers understand possible improvements.
 
-1. Project Introduction
-TechSpecAnalyser (CodeLens AI) is an intelligent software engineering support platform that combines static program analysis with Large Language Model-based reasoning to assist developers in understanding, reviewing and improving source code.
+### 📈 6. Code Quality Score
+- Presents an overall AI-generated code-review score.
+- Combines review insights into an understandable summary.
+- Helps developers identify areas for further improvement.
 
-It is designed to reduce repetitive manual code inspection and provide structured feedback about potential defects, code quality, complexity and possible improvements.
+---
 
-The system combines deterministic analysis techniques with AI-generated insights rather than relying solely on generative AI.
-2. Problem Definition
-Software developers face several challenges during code review:
-- Manual code review consumes time.
-- Potential defects may remain unnoticed.
-- Complex code is difficult to maintain.
-- Beginners may struggle to understand code quality issues.
-- AI-only code review may produce inaccurate suggestions.
-- Reviewing multiple files in a repository can be tedious.
-Proposed solution: An integrated platform that combines static analysis, repository processing and AI-assisted review to produce structured, explainable feedback.
-3. Objectives
-1. Automate preliminary source code review.
-2. Detect potential programming errors and suspicious patterns.
-3. Analyse code structure using static analysis.
-4. Generate context-aware improvement suggestions.
-5. Provide complexity insights.
-6. Support analysis of public GitHub repositories.
-7. Present results in a user-friendly dashboard.
-8. Encourage better software engineering practices.
-4. System Architecture
+## 🏗️ System Architecture
 
+```mermaid
+flowchart TD
+    A["👨‍💻 Developer"] --> B["🖥️ Streamlit Interface"]
 
+    B --> C{"Select Analysis Mode"}
 
+    C --> D["📝 Source Code Review"]
+    C --> E["🐙 GitHub Repository Review"]
 
+    D --> F["🔎 Static Analysis"]
+    E --> G["📂 Repository Fetcher"]
 
+    G --> H["📄 Eligible Source Files"]
+    H --> F
 
+    F --> I["🐍 Python AST"]
+    F --> J["📊 Radon Metrics"]
 
-medium.com
+    D --> K["🤖 Gemini AI Reviewer"]
+    H --> K
 
+    I --> L["📋 Analysis Results"]
+    J --> L
+    K --> L
 
-The architecture consists of the following logical components:
-Component	Responsibility
-User Interface	Accepts source code and repository URLs
-Input Processor	Validates and prepares source files
-GitHub Fetcher	Retrieves supported repository files
-Static Analyzer	Performs deterministic source code checks
-AST Processor	Examines Python syntax structure
-Complexity Analyzer	Calculates complexity metrics using Radon
-AI Review Engine	Generates structured review feedback
-Result Processor	Organizes analysis outputs
-Dashboard	Displays review results
+    L --> M["📈 Review Dashboard"]
+    M --> N["💡 Issues & Improvements"]
+    M --> O["📊 Complexity & Score"]
+    M --> P["🛠️ Improved Code"]
+```
 
-5. Core Technical Concepts
-Static Code Analysis
+---
 
-Static analysis examines source code without executing the program. It helps identify structural issues and potential defects.
+## 🔄 How It Works
 
-Abstract Syntax Tree (AST)
+1. **Input:** The developer submits source code or a public GitHub repository URL.
+2. **Repository Processing:** The repository fetcher identifies eligible source files.
+3. **Static Analysis:** Python AST checks syntax and selected code structures.
+4. **Complexity Analysis:** Radon calculates Python code complexity metrics.
+5. **AI Review:** Gemini analyzes the submitted code and generates structured review insights.
+6. **Result Generation:** The platform organizes available results into a review dashboard.
+7. **Improvement:** Developers use the findings and suggestions to improve their code.
 
-AST represents source code in a tree structure. It allows the analyzer to inspect programming constructs such as functions, loops, conditions and imports.
+> **Note:** Static analysis and AI review are separate components. Static analysis can provide results even when the AI API is unavailable.
 
-Large Language Models
+---
 
-Gemini is integrated to interpret source code and generate explanations, improvement suggestions and structured review results.
+## 🛠️ Technology Stack
 
-Cyclomatic Complexity
+| Category | Technologies |
+|---|---|
+| Programming Language | Python |
+| Frontend / Interface | Streamlit |
+| AI Integration | Google Gemini API |
+| Static Analysis | Python AST |
+| Complexity Analysis | Radon |
+| Repository Integration | GitHub API |
+| Testing | Pytest |
+| Version Control | Git & GitHub |
 
-Cyclomatic complexity estimates the number of independent execution paths in a program. Radon is used for complexity-related analysis.
-6. AI Review Pipeline
+---
 
+## 📁 Project Structure
 
+```text
+TechSpecAnalyser/
+│
+├── app.py                  # Streamlit application
+├── reviewer.py             # Gemini-based AI code reviewer
+├── github_fetcher.py       # GitHub repository fetching
+├── static_analysis.py     # Static analysis utilities
+├── syntax_checker.py      # Python syntax checking
+├── complexity.py          # Radon complexity metrics
+├── utils.py                # Helper functions
+│
+├── test.py                 # Tests
+├── test_reviewer.py        # AI reviewer tests
+├── test_github_fetcher.py  # Repository fetcher tests
+├── test_api_key.py         # API key-related checks
+│
+├── requirements.txt        # Project dependencies
+├── .gitignore
+└── README.md
+```
 
+---
 
+## ⚙️ Installation & Setup
 
+### Prerequisites
 
+- Python 3.10 or later (use a compatible version for the installed dependencies).
+- Git.
+- A Google Gemini API key for AI-powered review.
 
-linkedin.com
+### 1. Clone the Repository
 
-
-1. Receive source code.
-2. Validate input.
-3. Perform available static checks.
-4. Calculate complexity metrics.
-5. Send relevant code context to the AI review engine.
-6. Obtain structured review output.
-7. Organize bugs, improvements and complexity observations.
-8. Display results to the user.
-7. GitHub Repository Integration
-The GitHub integration extends the platform beyond single-file analysis.
-
-Workflow:
-- User provides a public GitHub repository URL.
-- The repository fetcher identifies the repository and its default branch.
-- Supported source files are collected.
-- Unnecessary directories and unsupported files are excluded.
-- File count and file size limits help control processing.
-- Retrieved files are passed through the review workflow.
-The implementation supports configured source extensions including Python, Java, C++, JavaScript, JSX, TypeScript, TSX, HTML, CSS and SCSS.
-8. Review Dashboard
-The planned presentation structure includes seven review sections:
-Tab	Purpose
-Overview	Summary of the review
-Issues	Potential bugs and detected concerns
-Improvements	Recommendations for better code
-Complexity	Complexity observations
-Score	Overall review score
-Before/After Diff	Comparison of original and suggested code
-History	Previous review records, if enabled
-
-9. Technology Stack
-- Python — core application logic.
-- Streamlit — application interface.
-- Google Gemini API — AI-powered review.
-- Python AST — structural code inspection.
-- Radon — complexity analysis.
-- GitHub integration — repository retrieval.
-- Pytest — automated testing.
-- Git and GitHub — version control.
-10. Quality Assurance
-Testing should evaluate:
-- Valid source code.
-- Invalid syntax.
-- Empty input.
-- Unsupported file types.
-- Large source files.
-- Invalid repository URLs.
-- Missing repository files.
-- API timeout and failures.
-- Malformed AI responses.
-- Output consistency.
-Important: Add actual test counts, test results, and screenshots before claiming measured accuracy or reliability.
-11. Security and Reliability
-- Store API keys in environment variables.
-- Do not expose secrets in source code.
-- Validate repository URLs.
-- Enforce file-size and file-count restrictions.
-- Avoid executing untrusted source code.
-- Handle external API errors gracefully.
-- Treat AI-generated code as suggestions requiring human review.
-12. Limitations
-- Static analysis cannot detect every runtime defect.
-- AI-generated recommendations may be incorrect.
-- Analysis depends on the supported language and file types.
-- Large repositories require processing constraints.
-- Complexity metrics do not independently measure overall code quality.
-13. Future Enhancements
-- Multi-language AST-based analysis.
-- Security vulnerability scanning.
-- Automated test generation.
-- Secure sandbox-based code execution.
-- Pull request review integration.
-- Technical specification and RFC linting.
-- Advanced multi-agent review orchestration.
-- Historical quality trend analysis.
-14. Academic Information
-Project: TechSpecAnalyser (CodeLens AI)
-
-Student: Srishti Pathak
-
-Institution: Central University of Jharkhand, Ranchi
-
-Degree: Integrated B.Tech & M.Tech in Computer Science and Engineering
-
-Specialization: Artificial Intelligence and Data Science
-
-Course: Engineering Project-I
-
-Course Code: CSE05419
-
-Project Type: Individual Engineering Project
-
-Project Guide: Dr. Prashant Prashun, Assistant Professor (confirm before publishing)
-15. Repository and Setup
-Repository: Code-Visualiser-Python
+```bash
 git clone https://github.com/Srish-pathak/Code-Visualiser-Python.git
+```
+
+### 2. Navigate to the Project Directory
+
+```bash
 cd Code-Visualiser-Python
+```
 
+### 3. Create a Virtual Environment
+
+```bash
 python -m venv venv
+```
 
+Activate it:
 
-Windows:
+**Windows**
+```bash
 venv\Scripts\activate
+```
 
+**Linux / macOS**
+```bash
+source venv/bin/activate
+```
 
-Install:
+### 4. Install Dependencies
+
+```bash
 pip install -r requirements.txt
+```
 
+### 5. Configure the Gemini API Key
 
-Configure:
-GEMINI_API_KEY=your_gemini_api_key
+Set your API key as an environment variable.
 
+**Windows PowerShell**
+```powershell
+$env:GEMINI_API_KEY="your_api_key_here"
+```
 
-Launch:
+**Linux / macOS**
+```bash
+export GEMINI_API_KEY="your_api_key_here"
+```
+
+Never commit API keys or other credentials to GitHub.
+
+### 6. Run the Application
+
+```bash
 streamlit run app.py
+```
 
+The application will open in your browser, generally at:
 
-Run tests:
+```text
+http://localhost:8501
+```
+
+---
+
+## 🧪 Testing
+
+Run the test suite using:
+
+```bash
 pytest -v
+```
 
+Run Python compilation checks:
 
-16. Expected Contribution
-The main engineering contribution is the integration of conventional static analysis with AI-assisted code review in a unified workflow.
+```bash
+python -m compileall .
+```
 
-It provides a structured way to inspect source code, understand potential issues and evaluate improvement suggestions.
-17. License and Acknowledgements
-This project is developed as an academic engineering project. A suitable open-source license should be added before external redistribution.
+Testing helps verify repository fetching, reviewer functionality, and other project components.
 
-TechSpecAnalyser (CodeLens AI)
+**Important:** Report the actual test results from your latest run rather than assuming all tests pass.
 
-Bridging Traditional Static Analysis and AI-Assisted Software Engineering
+---
+
+## 🔐 Security & Reliability
+
+- API credentials are read through environment variables.
+- Public repository fetching is subject to configured file-count and file-size limits.
+- Generated and dependency directories are excluded from repository scanning.
+- Static analysis does not depend on Gemini availability.
+- API errors and invalid AI responses should be handled gracefully.
+
+---
+
+## ⚠️ Current Limitations
+
+- AI-powered review requires a valid and available Gemini API quota.
+- Static AST and Radon analysis is currently Python-specific.
+- Other supported source-file types do not receive the same Python AST and Radon metrics.
+- Repository analysis is restricted by configured file-count and file-size limits.
+- AI-generated suggestions should be reviewed by developers before being applied.
+- The tool does not replace human code review, execution-based testing, or security auditing.
+
+---
+
+## 🔮 Future Enhancements
+
+- 🔁 Multi-provider AI support (Gemini, Claude, and DeepSeek).
+- 🌐 Expanded language-specific static analysis.
+- 📚 Automated technical documentation generation.
+- 🛡️ Advanced security vulnerability detection.
+- 📜 Persistent review history.
+- 👥 Collaborative code review.
+- 🔄 GitHub pull-request integration.
+- 📊 More detailed code-quality analytics.
+
+*These are planned enhancements, not claims about currently implemented functionality.*
+
+---
+
+## 🎯 Project Objective
+
+The primary objective of TechSpecAnalyser is to make code review more accessible, understandable, and efficient by combining traditional static analysis with AI-assisted feedback.
+
+It aims to help developers identify potential issues, understand code complexity, and improve software quality through structured analysis and actionable suggestions.
+
+---
+
+## 👩‍💻 Developer
+
+**Srishti Pathak**  
+Integrated B.Tech & M.Tech – Computer Science and Engineering  
+Specialization: Artificial Intelligence and Data Science  
+Central University of Jharkhand
+
+🔗 **GitHub:** https://github.com/Srish-pathak
+
+---
+
+## ⭐ Support
+
+If you find this project interesting, consider giving the repository a ⭐ on GitHub!
+
+**TechSpecAnalyser (CodeLens AI) — Making Code Review Smarter, One Analysis at a Time.**
