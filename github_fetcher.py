@@ -3,7 +3,7 @@
 import base64
 import json
 import os
-import re
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
@@ -42,7 +42,7 @@ class GitHubFetchError(Exception):
     """An expected input, repository, or GitHub API error."""
 
 
-def parse_github_url(repository_url):
+def parse_github_url(repository_url: str) -> tuple[str, str, str | None]:
     """Return owner, repository, and an optional branch from a GitHub URL."""
     if not isinstance(repository_url, str) or not repository_url.strip():
         raise GitHubFetchError("Enter a public GitHub repository URL.")
@@ -71,7 +71,11 @@ def parse_github_url(repository_url):
     return owner, repository, branch
 
 
-def _resolve_url_branch(owner, repository, path_parts):
+def _resolve_url_branch(
+    owner: str,
+    repository: str,
+    path_parts: list[str],
+) -> str:
     """Resolve GitHub's ambiguous branch/path suffix to the longest branch name."""
     if len(path_parts) == 1:
         return path_parts[0]
@@ -95,7 +99,7 @@ def _resolve_url_branch(owner, repository, path_parts):
     return "/".join(path_parts)
 
 
-def _github_get(url):
+def _github_get(url: str) -> dict[str, Any]:
     request = Request(
         url,
         headers={
@@ -124,7 +128,7 @@ def _github_get(url):
         raise GitHubFetchError("GitHub returned an unreadable API response.") from exc
 
 
-def _is_supported_source(path):
+def _is_supported_source(path: str) -> bool:
     components = path.replace("\\", "/").split("/")
     if any(component.lower() in EXCLUDED_DIRECTORIES for component in components[:-1]):
         return False
@@ -133,7 +137,12 @@ def _is_supported_source(path):
     return os.path.splitext(components[-1])[1].lower() in SUPPORTED_EXTENSIONS
 
 
-def _fetch_file(owner, repository, branch, path):
+def _fetch_file(
+    owner: str,
+    repository: str,
+    branch: str,
+    path: str,
+) -> str:
     encoded_path = quote(path, safe="/")
     encoded_ref = quote(branch, safe="")
     endpoint = "{}/repos/{}/{}/contents/{}?ref={}".format(
@@ -151,7 +160,7 @@ def _fetch_file(owner, repository, branch, path):
     return content
 
 
-def fetch_public_repository(repository_url):
+def fetch_public_repository(repository_url: str) -> dict[str, Any]:
     """Fetch repository metadata and a capped set of supported source files.
 
     The returned ``source_files_detected`` count includes eligible source files

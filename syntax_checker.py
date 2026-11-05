@@ -1,24 +1,27 @@
 import ast
+from typing import Any
 
-def check_syntax(code, language):
-    if language!='Python':
-        return{
-            "valid":True,
-            "bugs":[]
+
+def check_syntax(code: str, language: str) -> dict[str, Any]:
+    """Check Python syntax and return review-compatible bug data."""
+    if language != "Python":
+        return {
+            "valid": True,
+            "bugs": [],
         }
     
     try:
         ast.parse(code)
-        return{
-            "valid":True,
-            "bugs":[]
-        }
-    except SyntaxError as e:
         return {
-            "valid":False,
+            "valid": True,
+            "bugs": [],
+        }
+    except SyntaxError as error:
+        return {
+            "valid": False,
             "bugs": {
-                "line":e.lineno,
-                "severity":"critical",
-                "description":f"SyntaxError:{e.msg}"
-            }
+                "line": error.lineno,
+                "severity": "critical",
+                "description": f"SyntaxError: {error.msg}",
+            },
         }

@@ -17,8 +17,7 @@ DEFAULT_SESSION_STATE = {
 }
 
 for key, default_value in DEFAULT_SESSION_STATE.items():
-    if key not in st.session_state:
-        st.session_state[key] = default_value
+    st.session_state.setdefault(key, default_value)
 
 try:
     from streamlit_ace import st_ace
@@ -93,8 +92,8 @@ if run_clicked:
 
 
 # ---------- Manual review results ----------
-result = st.session_state.get("review_result")
-complexity = st.session_state.get("complexity_result")
+result = st.session_state.get("review_result", None)
+complexity = st.session_state.get("complexity_result", None)
 
 if result:
     if result.get("error"):
@@ -222,7 +221,7 @@ if st.button("Analyze Repository", type="primary", key="analyze_repository"):
         except Exception as exc:
             st.error("Repository review could not be completed: {}".format(exc))
 
-repo_result = st.session_state.get("repository_result")
+repo_result = st.session_state.get("repository_result", None)
 if repo_result:
     repository_data = repo_result["repository"]
     review_data = repo_result["review"]

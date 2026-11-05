@@ -1,9 +1,15 @@
+import os
+from collections.abc import Callable
+from typing import Any
+
+import streamlit as st
 from google import genai
-from utils import safe_json_parse
-from google.genai import types
-from syntax_checker import check_syntax
-from static_analysis import analyze_static
+from streamlit.errors import StreamlitSecretNotFoundError
+
 from complexity import analyze_complexity
+from static_analysis import analyze_static
+from syntax_checker import check_syntax
+from utils import safe_json_parse
 
 MODEL_NAME = "gemini-3.8-flash"
 
@@ -47,15 +53,8 @@ Rules
 - Don't invent bugs.
 - Keep suggestions educational.
 """
-
-
-import os
-
-import streamlit as st
-from streamlit.errors import StreamlitSecretNotFoundError
-
-
-def get_client():
+def get_client() -> genai.Client:
+    """Create a Gemini client using environment or Streamlit credentials."""
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
@@ -73,7 +72,8 @@ def get_client():
     return genai.Client(api_key=api_key)
 
 
-def build_user_prompt(code, language):
+def build_user_prompt(code: str, language: str) -> str:
+    """Build the code-review prompt sent to Gemini."""
     return f"""
 Review this {language} code.
 
@@ -86,7 +86,8 @@ Code:
 Return your review strictly as the JSON schema described in your instructions."""
 
 
-def review_code(code, language):
+def review_code(code: str, language: str) -> dict[str, Any]:
+    """Run syntax, static, and Gemini review analysis for one code sample."""
     if not code or not code.strip():
         return {
             "bugs": [],
@@ -143,7 +144,10 @@ def review_code(code, language):
     return result
 
 
-def review_repo_files(files, progress_callback=None):
+def review_repo_files(
+    files: list[dict[str, Any]],
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> dict[str, Any]:
     """Review fetched files individually, reusing ``review_code`` for each.
 
     ``files`` is a sequence of dictionaries with path, language, and content.
@@ -183,8 +187,6 @@ def review_repo_files(files, progress_callback=None):
             bugs = []
         review["bugs"] = bugs
 
-        # Complexity is only reported where the existing project has a real
-        # analyzer. The heuristic fallback is intentionally not used here.
         complexity = None
         if language == "Python":
             try:
