@@ -1,0 +1,129 @@
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
+
+from complexity import analyze_complexity
+from reviewer import review_code, review_repo_files
+
+
+def _successful_client(content):
+    client = SimpleNamespace()
+    client.models = SimpleNamespace(
+        generate_content=lambda **kwargs: SimpleNamespace(text=content)
+    )
+    return client
+
+
+def test_valid_python_source_keeps_static_analysis_successful():
+    with patch("reviewer.get_client", return_value=_successful_client(
+        '{"summary":"Looks good","bugs":[],"improvements":[],"complexity_notes":"","overall_score":8,"improved_code":""}'
+    )):
+        result = review_code("def add(a, b):\n    return a + b\n", "Python")
+
+    assert result["analysis_status"]["static"] == "completed"
+    assert result["analysis_status"]["ai"] == "completed"
+    assert result["bugs"] == []
+
+
+def test_invalid_python_syntax_skips_gemini():
+    with patch("reviewer.get_client") as client:
+        result = review_code("def broken(:\n    pass\n", "Python")
+
+    client.assert_not_called()
+    assert result["analysis_status"]["static"] == "completed_with_errors"
+    assert result["analysis_status"]["ai"] == "not_run"
+    assert result["bugs"][0]["severity"] == "critical"
+
+
+def test_empty_source_is_not_analyzed():
+    result = review_code("   \n", "Python")
+    assert result["error"] is True
+    assert result["analysis_status"]["static"] == "failed"
+
+
+def test_high_complexity_python_is_measured():
+    code = """def complex_function(value):
+    if value > 0:
+        if value > 10:
+            return 3
+        return 2
+    return 1
+"""
+    result = analyze_complexity(code, "Python")
+    assert result["details"][0]["name"] == "complex_function"
+    assert result["details"][0]["complexity"] >= 3
+
+
+@pytest.mark.parametrize(
+    ("error_text", "expected_status"),
+    [
+        ("429 RESOURCE_EXHAUSTED", "rate_limited"),
+        ("403 PERMISSION_DENIED", "permission_denied"),
+    ],
+)
+def test_gemini_permission_and_quota_errors_are_isolated(error_text, expected_status):
+    def fail(**kwargs):
+        raise RuntimeError(error_text)
+
+    client = SimpleNamespace(models=SimpleNamespace(generate_content=fail))
+    with patch("reviewer.get_client", return_value=client):
+        result = review_code("print('hello')\n", "Python")
+
+    assert result["analysis_status"]["static"] == "completed"
+    assert result["analysis_status"]["ai"] == expected_status
+    assert result["summary"].startswith("AI Review Unavailable")
+    assert result["overall_score"] == 0
+
+
+def test_invalid_gemini_response_is_unavailable():
+    with patch("reviewer.get_client", return_value=_successful_client("not json")):
+        result = review_code("print('hello')\n", "Python")
+
+    assert result["analysis_status"]["ai"] == "invalid_response"
+
+
+def test_successful_ai_review_is_preserved():
+    content = (
+        '{"summary":"Potential issue","bugs":[{"line":1,"severity":"warning",'
+        '"description":"Check this value"}],"improvements":[],"complexity_notes":"Simple",'
+        '"overall_score":7,"improved_code":"print(1)"}'
+    )
+    with patch("reviewer.get_client", return_value=_successful_client(content)):
+        result = review_code("print(value)\n", "Python")
+
+    assert result["summary"] == "Potential issue"
+    assert result["overall_score"] == 7
+    assert result["improved_code"] == "print(1)"
+
+
+def test_partial_repository_review_counts_ai_failure_separately():
+    files = [
+        {"path": "good.py", "language": "Python", "content": "print('ok')\n"},
+        {"path": "bad.py", "language": "Python", "content": "print('ok')\n"},
+    ]
+
+    successful = {
+        "summary": "Review complete",
+        "bugs": [],
+        "improvements": [],
+        "overall_score": 8,
+        "improved_code": "",
+        "analysis_status": {"static": "completed", "ai": "completed"},
+    }
+    unavailable = {
+        "summary": "AI Review Unavailable",
+        "bugs": [],
+        "improvements": [],
+        "overall_score": 0,
+        "improved_code": "",
+        "error": True,
+        "analysis_status": {"static": "completed", "ai": "rate_limited"},
+    }
+    with patch("reviewer.review_code", side_effect=[successful, unavailable]):
+        result = review_repo_files(files)
+
+    assert result["files_reviewed"] == 2
+    assert result["failed_files"] == 0
+    assert result["ai_failed_files"] == 1
+    assert result["overall_score"] == 8.0

@@ -96,29 +96,31 @@ result = st.session_state.get("review_result", None)
 complexity = st.session_state.get("complexity_result", None)
 
 if result:
-    if result.get("error"):
-        st.error(result.get("summary", "Something went wrong during review."))
-    else:
-        st.markdown("---")
-        st.subheader("Review Results")
-
-        if result.get("summary"):
+    st.markdown("---")
+    st.subheader("Review Results")
+    ai_status = result.get("analysis_status", {}).get("ai", "unknown")
+    if ai_status != "completed":
+        st.warning(result.get("summary", "AI Review Unavailable — static analysis is still available."))
+    elif result.get("summary"):
             st.info(result["summary"])
 
-        tab_bugs, tab_improve, tab_complexity, tab_score, tab_diff = st.tabs(
+    tab_bugs, tab_improve, tab_complexity, tab_score, tab_diff = st.tabs(
             ["🐛 Bugs", "💡 Improvements", "⚙️ Complexity", "📊 Score", "🔀 Before/After"]
         )
 
-        with tab_bugs:
+    with tab_bugs:
             bugs = result.get("bugs", [])
             if not bugs:
-                st.success("No bugs found. Nice and clean! ✅")
+                if ai_status == "completed":
+                    st.success("No bugs found by static analysis or the AI review. ✅")
+                else:
+                    st.info("No static bugs were found. AI findings are unavailable.")
             else:
                 for bug in bugs:
                     with st.expander("Line {} — {}".format(bug.get("line", "N/A"), bug.get("severity", "info").title())):
                         st.markdown(format_bug_entry(bug))
 
-        with tab_improve:
+    with tab_improve:
             improvements = result.get("improvements", [])
             if not improvements:
                 st.info("No specific improvements suggested.")
@@ -127,7 +129,7 @@ if result:
                     st.markdown(format_improvement_entry(item))
                     st.markdown("")
 
-        with tab_complexity:
+    with tab_complexity:
             if complexity:
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Method", complexity["method"].title())
@@ -146,22 +148,26 @@ if result:
 
             st.caption(result.get("complexity_notes", ""))
 
-        with tab_score:
+    with tab_score:
             score = result.get("overall_score", 0)
-            color = score_color(score)
-            label = score_label(score)
-
-            st.markdown("### Overall Code Health: **{}/10** — {}".format(score, label))
-            st.progress(min(max(score / 10, 0), 1.0))
-
-            if color == "green":
-                st.success("This code is in great shape!")
-            elif color == "orange":
-                st.warning("Decent, but there's room to improve.")
+            if ai_status != "completed":
+                st.info("AI score unavailable because Gemini review did not complete.")
             else:
-                st.error("This code needs significant work.")
+                score = result.get("overall_score", 0)
+                color = score_color(score)
+                label = score_label(score)
 
-        with tab_diff:
+                st.markdown("### Overall Code Health: **{}/10** — {}".format(score, label))
+                st.progress(min(max(score / 10, 0), 1.0))
+
+                if color == "green":
+                    st.success("This code is in great shape!")
+                elif color == "orange":
+                    st.warning("Decent, but there's room to improve.")
+                else:
+                    st.error("This code needs significant work.")
+
+    with tab_diff:
             improved = result.get("improved_code", "")
             if improved:
                 left, right = st.columns(2)
@@ -248,6 +254,12 @@ if repo_result:
         st.warning("GitHub returned a truncated file tree; the detected file count may be incomplete.")
     if review_data.get("failed_files"):
         st.warning("{} file(s) could not be reviewed; other file results are available below.".format(review_data["failed_files"]))
+    if review_data.get("ai_failed_files"):
+        st.warning(
+            "{} file(s) completed static analysis, but their AI review was unavailable.".format(
+                review_data["ai_failed_files"]
+            )
+        )
     if repository_data.get("fetch_errors"):
         with st.expander("Files skipped during download ({})".format(len(repository_data["fetch_errors"]))):
             for item in repository_data["fetch_errors"]:
@@ -277,7 +289,10 @@ if repo_result:
     findings_tab, improvements_tab, files_tab = st.tabs(["🐛 Bugs & security", "💡 Improvements", "📁 File-wise analysis"])
     with findings_tab:
         if not all_bugs:
-            st.success("No bugs were reported in the reviewed files.")
+            if review_data.get("ai_failed_files"):
+                st.info("No deterministic bugs were reported. AI bug findings are unavailable for {} file(s).".format(review_data["ai_failed_files"]))
+            else:
+                st.success("No bugs were reported in the reviewed files.")
         else:
             for path, bug in all_bugs:
                 with st.expander("{} — Line {} — {}".format(

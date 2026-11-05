@@ -11,7 +11,7 @@ from static_analysis import analyze_static
 from syntax_checker import check_syntax
 from utils import safe_json_parse
 
-MODEL_NAME = "gemini-3.8-flash"
+MODEL_NAME = "gemini-2.5-flash"
 
 SYSTEM_PROMPT = """
 You are a senior software engineer performing a code review.
@@ -72,6 +72,29 @@ def get_client() -> genai.Client:
     return genai.Client(api_key=api_key)
 
 
+def _gemini_error_message(exc: Exception) -> tuple[str, str]:
+    """Return a safe, user-facing message and status for Gemini failures."""
+    text = "{} {}".format(type(exc).__name__, exc)
+    lowered = text.lower()
+    code = getattr(exc, "code", None)
+    status_code = getattr(exc, "status_code", None)
+    status = str(code or status_code or "")
+
+    if "429" in text or status == "429" or "resource_exhausted" in lowered or "rate limit" in lowered:
+        return "Gemini rate limit reached (429). Static analysis is still available.", "rate_limited"
+    if "empty" in lowered and "response" in lowered or "incomplete response" in lowered or "could not parse model response" in lowered:
+        return "Gemini returned an invalid or incomplete response. Static analysis is still available.", "invalid_response"
+    if "401" in text or "403" in text or status in {"401", "403", "PERMISSION_DENIED"} or "permission_denied" in lowered:
+        return "Gemini access was denied (403). Check the API key and Gemini API permissions.", "permission_denied"
+    if "api key" in lowered or "api_key" in lowered or "invalid api" in lowered:
+        return "The configured Gemini API key is invalid. Static analysis is still available.", "invalid_api_key"
+    if "timeout" in lowered or "timed out" in lowered:
+        return "Gemini timed out while generating the review. Static analysis is still available.", "timeout"
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return "Could not connect to Gemini. Static analysis is still available.", "network_error"
+    return "Gemini review is currently unavailable. Static analysis is still available.", "unavailable"
+
+
 def build_user_prompt(code: str, language: str) -> str:
     """Build the code-review prompt sent to Gemini."""
     return f"""
@@ -97,6 +120,7 @@ def review_code(code: str, language: str) -> dict[str, Any]:
             "improved_code": "",
             "summary": "No code was provided to review.",
             "error": True,
+            "analysis_status": {"static": "failed", "ai": "not_run"},
         }
 
     syntax_result = check_syntax(code, language)
@@ -111,9 +135,13 @@ def review_code(code: str, language: str) -> dict[str, Any]:
             "complexity_notes": "Fix syntax errors before reviewing.",
             "improved_code": "",
             "overall_score": 1,
+            "static_analysis": {"syntax": syntax_result, "findings": syntax_bugs},
+            "complexity_notes": "Fix syntax errors before reviewing.",
+            "analysis_status": {"static": "completed_with_errors", "ai": "not_run"},
         }
 
     static_bugs = analyze_static(code, language)
+    complexity = analyze_complexity(code, language) if language == "Python" else None
 
     # Keep client creation inside the exception boundary: missing credentials and
     # Gemini/network errors should become a normal review result, not a crash.
@@ -128,19 +156,32 @@ def review_code(code: str, language: str) -> dict[str, Any]:
                 "response_mime_type": "application/json",
             },
         )
-        result = safe_json_parse(response.text)
+        response_text = getattr(response, "text", None)
+        if not response_text:
+            raise ValueError("Gemini returned an empty or incomplete response.")
+        ai_result = safe_json_parse(response_text)
+        if ai_result.get("error"):
+            raise ValueError(ai_result["summary"])
+        result = ai_result
     except Exception as exc:
+        message, ai_status = _gemini_error_message(exc)
         return {
             "bugs": static_bugs,
             "improvements": [],
             "complexity_notes": "N/A",
             "overall_score": 0,
             "improved_code": "",
-            "summary": "Gemini API Error: {}".format(exc),
+            "summary": "AI Review Unavailable — {}".format(message),
             "error": True,
+            "static_analysis": {"syntax": syntax_result, "findings": static_bugs},
+            "complexity": complexity,
+            "analysis_status": {"static": "completed", "ai": ai_status},
         }
 
     result["bugs"] = static_bugs + result.get("bugs", [])
+    result["static_analysis"] = {"syntax": syntax_result, "findings": static_bugs}
+    result["complexity"] = complexity
+    result["analysis_status"] = {"static": "completed", "ai": "completed"}
     return result
 
 
@@ -160,6 +201,7 @@ def review_repo_files(
     warning_count = 0
     improvement_count = 0
     failed_count = 0
+    ai_failed_count = 0
 
     for index, file_info in enumerate(files, start=1):
         path = file_info.get("path", "<unknown>")
@@ -178,6 +220,7 @@ def review_repo_files(
                 "overall_score": 0,
                 "improved_code": "",
                 "error": True,
+                "analysis_status": {"static": "failed", "ai": "not_run"},
             }
 
         bugs = review.get("bugs", [])
@@ -206,7 +249,11 @@ def review_repo_files(
 
         is_error = bool(review.get("error"))
         if is_error:
-            failed_count += 1
+            ai_status = review.get("analysis_status", {}).get("ai")
+            if ai_status not in {None, "not_run"}:
+                ai_failed_count += 1
+            else:
+                failed_count += 1
         else:
             try:
                 score_values.append(float(review.get("overall_score", 0)))
@@ -229,6 +276,7 @@ def review_repo_files(
         "warnings": warning_count,
         "improvement_count": improvement_count,
         "failed_files": failed_count,
+        "ai_failed_files": ai_failed_count,
         "overall_score": round(sum(score_values) / len(score_values), 1) if score_values else None,
         "file_results": results,
     }
