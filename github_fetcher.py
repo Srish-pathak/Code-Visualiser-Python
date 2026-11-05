@@ -184,20 +184,25 @@ def fetch_public_repository(repository_url: str) -> dict[str, Any]:
     )
     tree_data = _github_get(tree_url)
     entries = tree_data.get("tree", [])
-    candidates = [
-        item for item in entries
-        if item.get("type") == "blob"
-        and isinstance(item.get("size"), int)
-        and item["size"] <= MAX_FILE_BYTES
-        and _is_supported_source(item.get("path", ""))
+    blobs = [item for item in entries if item.get("type") == "blob"]
+    supported = [item for item in blobs if _is_supported_source(item.get("path", ""))]
+    oversized = [
+        item for item in supported
+        if not isinstance(item.get("size"), int) or item["size"] > MAX_FILE_BYTES
     ]
+    candidates = [item for item in supported if item not in oversized]
 
     files = []
     fetch_errors = []
-    for item in candidates[:MAX_FILES]:
+    capped_candidates = candidates[:MAX_FILES]
+    file_limit_skipped = len(candidates) - len(capped_candidates)
+    for item in capped_candidates:
         path = item["path"]
         try:
             content = _fetch_file(owner, repository, branch, path)
+            if len(content.encode("utf-8")) > MAX_FILE_BYTES:
+                oversized.append({"path": path})
+                continue
             files.append({
                 "path": path,
                 "language": SUPPORTED_EXTENSIONS[os.path.splitext(path)[1].lower()],
@@ -216,6 +221,11 @@ def fetch_public_repository(repository_url: str) -> dict[str, Any]:
         "branch": branch,
         "default_branch": default_branch,
         "source_files_detected": len(candidates),
+        "unsupported_files_skipped": len(blobs) - len(supported),
+        "oversized_files_skipped": len(oversized),
+        "file_limit_skipped": file_limit_skipped,
+        "files_fetched_successfully": len(files),
+        "files_fetched_failed": len(fetch_errors),
         "files": files,
         "files_limited": len(candidates) > MAX_FILES,
         "tree_truncated": bool(tree_data.get("truncated")),
