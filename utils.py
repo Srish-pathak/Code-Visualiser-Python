@@ -1,17 +1,17 @@
 import json
 import re
 
-LANGUAGE_CONFIG={
-    "Python":{"ace_mode":"python","ext":".py","supports_radon":True},
-    "C++":{"ace_mode":"c_cpp","ext":".cpp","supports_radon":False},
-    "Java":{"ace_mode":"java","ext":".java","supports_radon":False},
-    "JavaScript":{"ace_mode":"javascript","ext":".js","supports_radon":False},
-    "JSX":{"ace_mode":"jsx","ext":".jsx","supports_radon":False},
-    "TypeScript":{"ace_mode":"typescript","ext":".ts","supports_radon":False},
-    "TSX":{"ace_mode":"tsx","ext":".tsx","supports_radon":False},
-    "HTML":{"ace_mode":"html","ext":".html","supports_radon":False},
-    "CSS":{"ace_mode":"css","ext":".css","supports_radon":False},
-    "SCSS":{"ace_mode":"scss","ext":".scss","supports_radon":False},
+LANGUAGE_CONFIG = {
+    "Python": {"ace_mode": "python", "ext": ".py", "supports_radon": True},
+    "C++": {"ace_mode": "c_cpp", "ext": ".cpp", "supports_radon": False},
+    "Java": {"ace_mode": "java", "ext": ".java", "supports_radon": False},
+    "JavaScript": {"ace_mode": "javascript", "ext": ".js", "supports_radon": False},
+    "JSX": {"ace_mode": "jsx", "ext": ".jsx", "supports_radon": False},
+    "TypeScript": {"ace_mode": "typescript", "ext": ".ts", "supports_radon": False},
+    "TSX": {"ace_mode": "tsx", "ext": ".tsx", "supports_radon": False},
+    "HTML": {"ace_mode": "html", "ext": ".html", "supports_radon": False},
+    "CSS": {"ace_mode": "css", "ext": ".css", "supports_radon": False},
+    "SCSS": {"ace_mode": "scss", "ext": ".scss", "supports_radon": False},
 }
 
 SEVERITY_STYLE={
