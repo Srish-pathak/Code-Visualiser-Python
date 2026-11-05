@@ -189,7 +189,7 @@ st.markdown("---")
 st.subheader("🐙 Tech Spec Analyser – GitHub Repository Analysis")
 st.caption(
     "Analyse supported source files from a public GitHub repository. "
-    "Files are sent to Gemini for analysis; do not submit code you are not permitted to share."
+    "Files are sent to an AI provider for analysis; do not submit code you are not permitted to share."
 )
 repository_url = st.text_input(
     "Public GitHub repository URL",
@@ -214,7 +214,7 @@ if st.button("Analyze Repository", type="primary", key="analyze_repository"):
                     progress_bar.progress(completed / total, text="Reviewing {}/{} files".format(completed, total))
                     status_text.caption("Currently reviewing: {}".format(current_path))
 
-                with st.spinner("Gemini is reviewing repository files..."):
+                with st.spinner("TechSpecAnalyser is reviewing your code..."):
                     review_data = review_repo_files(repository_data["files"], update_review_progress)
                 progress_bar.empty()
                 status_text.empty()
@@ -253,7 +253,7 @@ if repo_result:
     if repository_data.get("tree_truncated"):
         st.warning("GitHub returned a truncated file tree; the detected file count may be incomplete.")
     if review_data.get("failed_files"):
-        st.warning("{} file(s) could not be reviewed by Gemini; other file results are available below.".format(review_data["failed_files"]))
+        st.warning("{} file(s) could not be reviewed; other file results are available below.".format(review_data["failed_files"]))
     if repository_data.get("fetch_errors"):
         with st.expander("Files skipped during download ({})".format(len(repository_data["fetch_errors"]))):
             for item in repository_data["fetch_errors"]:
