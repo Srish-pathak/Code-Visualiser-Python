@@ -7,12 +7,28 @@ from complexity import analyze_complexity
 from reviewer import review_code, review_repo_files
 
 
+@pytest.fixture(autouse=True)
+def clear_ai_provider_environment(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("AI_PROVIDER", raising=False)
+
+
 def _successful_client(content):
     client = SimpleNamespace()
     client.models = SimpleNamespace(
         generate_content=lambda **kwargs: SimpleNamespace(text=content)
     )
     return client
+
+
+def _successful_deepseek_client(content):
+    message = SimpleNamespace(content=content)
+    choice = SimpleNamespace(message=message)
+    return SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **kwargs: SimpleNamespace(choices=[choice]))
+        )
+    )
 
 
 def test_valid_python_source_keeps_static_analysis_successful():
@@ -127,3 +143,79 @@ def test_partial_repository_review_counts_ai_failure_separately():
     assert result["failed_files"] == 0
     assert result["ai_failed_files"] == 1
     assert result["overall_score"] == 8.0
+
+
+def test_successful_deepseek_review(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    content = (
+        '{"summary":"DeepSeek review","bugs":[],"improvements":[],"complexity_notes":"Simple",'
+        '"overall_score":8,"improved_code":"print(1)"}'
+    )
+    with patch("reviewer.get_deepseek_client", return_value=_successful_deepseek_client(content)):
+        result = review_code("print(1)\n", "Python")
+
+    assert result["summary"] == "DeepSeek review"
+    assert result["overall_score"] == 8
+    assert result["analysis_status"]["ai"] == "completed"
+
+
+def test_deepseek_missing_key_is_unavailable(monkeypatch):
+    monkeypatch.setenv("AI_PROVIDER", "deepseek")
+    result = review_code("print(1)\n", "Python")
+
+    assert result["analysis_status"]["static"] == "completed"
+    assert result["analysis_status"]["ai"] == "invalid_api_key"
+    assert result["summary"].startswith("AI Review Unavailable")
+
+
+def test_deepseek_malformed_json_is_unavailable(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    with patch(
+        "reviewer.get_deepseek_client",
+        return_value=_successful_deepseek_client("not json"),
+    ):
+        result = review_code("print(1)\n", "Python")
+
+    assert result["analysis_status"]["ai"] == "invalid_response"
+
+
+def test_deepseek_invalid_api_key_is_unavailable(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+
+    def fail(**kwargs):
+        raise RuntimeError("401 invalid api key")
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=fail)
+        )
+    )
+    with patch("reviewer.get_deepseek_client", return_value=client):
+        result = review_code("print(1)\n", "Python")
+
+    assert result["analysis_status"]["ai"] == "invalid_api_key"
+
+
+@pytest.mark.parametrize(
+    ("error_text", "expected_status"),
+    [
+        ("429 insufficient balance", "rate_limited"),
+        ("403 Permission denied", "permission_denied"),
+    ],
+)
+def test_deepseek_api_errors_are_isolated(monkeypatch, error_text, expected_status):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+
+    def fail(**kwargs):
+        raise RuntimeError(error_text)
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=fail)
+        )
+    )
+    with patch("reviewer.get_deepseek_client", return_value=client):
+        result = review_code("print(1)\n", "Python")
+
+    assert result["analysis_status"]["static"] == "completed"
+    assert result["analysis_status"]["ai"] == expected_status

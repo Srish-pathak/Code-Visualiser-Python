@@ -1,4 +1,4 @@
-from reviewer import get_client
+from reviewer import get_client, get_deepseek_client
 import pytest
 from unittest.mock import patch
 
@@ -26,3 +26,21 @@ def test_get_client_uses_streamlit_secret(monkeypatch):
         get_client()
 
     client.assert_called_once_with(api_key="secret-key")
+
+
+def test_get_deepseek_client_requires_key_when_env_missing(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    with pytest.raises(EnvironmentError, match="DEEPSEEK_API_KEY not found"):
+        get_deepseek_client()
+
+
+def test_get_deepseek_client_uses_environment_key(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "environment-deepseek-key")
+
+    with patch("reviewer.OpenAI") as client:
+        get_deepseek_client()
+
+    client.assert_called_once_with(
+        api_key="environment-deepseek-key",
+        base_url="https://api.deepseek.com",
+    )

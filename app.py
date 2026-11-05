@@ -41,7 +41,10 @@ with st.sidebar:
         "3. Get bugs, suggestions, complexity & a score"
     )
     st.markdown("---")
-    st.caption("Requires `GEMINI_API_KEY` set as an environment variable or Streamlit secret.")
+    st.caption(
+        "Configure `DEEPSEEK_API_KEY` for DeepSeek, or `GEMINI_API_KEY` "
+        "as an environment variable or Streamlit secret for Gemini."
+    )
 
 st.subheader("Your Code")
 
@@ -151,7 +154,7 @@ if result:
     with tab_score:
             score = result.get("overall_score", 0)
             if ai_status != "completed":
-                st.info("AI score unavailable because Gemini review did not complete.")
+                st.info("AI score unavailable because the AI review did not complete.")
             else:
                 score = result.get("overall_score", 0)
                 color = score_color(score)
