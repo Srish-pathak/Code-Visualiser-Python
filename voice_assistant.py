@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from io import BytesIO
 import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Optional
@@ -113,23 +112,6 @@ def generate_assistant_response(
         return "The assistant is unavailable right now. Please try again."
 
 
-def generate_speech(text: str) -> Optional[bytes]:
-    """Convert English text to in-memory MP3 audio using gTTS."""
-    if not isinstance(text, str) or not text.strip():
-        return None
-
-    try:
-        from gtts import gTTS
-
-        buffer = BytesIO()
-        speech = gTTS(text=text.strip(), lang="en")
-        speech.write_to_fp(buffer)
-        audio = buffer.getvalue()
-        return audio if audio else None
-    except Exception:
-        return None
-
-
 def _select_mapping_items(data: Mapping[str, Any]) -> dict[str, Any]:
     """Select common review fields while avoiding large nested payloads."""
     selected: dict[str, Any] = {}
@@ -210,3 +192,85 @@ def build_review_context(
         return json.dumps(context, ensure_ascii=True, indent=2, default=str)
     except (TypeError, ValueError):
         return "Analysis context is available, but could not be serialized."
+
+
+def _format_issue(issue: Any) -> str:
+    if not isinstance(issue, Mapping):
+        return str(issue)
+    line = issue.get("line", "N/A")
+    severity = issue.get("severity", "info")
+    description = issue.get("description", issue.get("detail", ""))
+    title = issue.get("title", "")
+    parts = ["Line {}".format(line), "{}".format(severity)]
+    if title:
+        parts.append(str(title))
+    if description:
+        parts.append(str(description))
+    return " - ".join(parts)
+
+
+def build_full_analysis(
+    review_result: Optional[Mapping[str, Any]] = None,
+    complexity_result: Optional[Mapping[str, Any]] = None,
+    repository_result: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Build a readable spoken summary of completed manual/repository analysis."""
+    sections: list[str] = []
+
+    if isinstance(review_result, Mapping) and not review_result.get("error"):
+        sections.append("Code review summary: {}".format(review_result.get("summary", "No summary available.")))
+        sections.append("Overall code quality score: {}/10".format(review_result.get("overall_score", "N/A")))
+        bugs = review_result.get("bugs", [])
+        sections.append("Bugs and vulnerabilities:")
+        sections.append("\n".join(_format_issue(item) for item in bugs) if bugs else "No bugs found.")
+        improvements = review_result.get("improvements", [])
+        sections.append("Code improvements:")
+        sections.append("\n".join(_format_issue(item) for item in improvements) if improvements else "No improvements suggested.")
+        if review_result.get("complexity_notes"):
+            sections.append("Complexity notes: {}".format(review_result["complexity_notes"]))
+
+    if isinstance(complexity_result, Mapping):
+        sections.append(
+            "Complexity analysis: method {}, average complexity {}, rating {}.".format(
+                complexity_result.get("method", "N/A"),
+                complexity_result.get("average_complexity", "N/A"),
+                complexity_result.get("rating", "N/A"),
+            )
+        )
+        if complexity_result.get("maintainability_index") is not None:
+            sections.append("Maintainability index: {}.".format(complexity_result["maintainability_index"]))
+
+    if isinstance(repository_result, Mapping):
+        repository = repository_result.get("repository")
+        nested_review = repository_result.get("review")
+        if isinstance(repository, Mapping):
+            sections.append(
+                "GitHub repository review: {}.".format(repository.get("full_name", "Repository"))
+            )
+        if isinstance(nested_review, Mapping):
+            sections.append(
+                "Repository score: {}; critical bugs: {}; warnings: {}.".format(
+                    nested_review.get("overall_score", "N/A"),
+                    nested_review.get("critical_bugs", "N/A"),
+                    nested_review.get("warnings", "N/A"),
+                )
+            )
+            file_results = nested_review.get("file_results", [])
+            if isinstance(file_results, Sequence) and not isinstance(file_results, (str, bytes)):
+                for file_result in file_results:
+                    if not isinstance(file_result, Mapping):
+                        continue
+                    file_review = file_result.get("review", {})
+                    sections.append("File {}: {}.".format(
+                        file_result.get("path", "Unknown"),
+                        file_review.get("summary", "No summary available.") if isinstance(file_review, Mapping) else "No summary available.",
+                    ))
+                    if isinstance(file_review, Mapping):
+                        bugs = file_review.get("bugs", [])
+                        if bugs:
+                            sections.append("Findings: {}".format("; ".join(_format_issue(item) for item in bugs)))
+                        improvements = file_review.get("improvements", [])
+                        if improvements:
+                            sections.append("Suggestions: {}".format("; ".join(_format_issue(item) for item in improvements)))
+
+    return "\n\n".join(sections) or "No completed code review is available yet."

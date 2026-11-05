@@ -1,6 +1,5 @@
 import json
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import voice_assistant
@@ -91,23 +90,6 @@ def test_gemini_assistant_error_is_handled_safely():
     assert "unavailable" in result.lower()
 
 
-def test_empty_speech_text_returns_none():
-    assert voice_assistant.generate_speech("") is None
-
-
-def test_gtts_failure_returns_none():
-    gtts_module = ModuleType("gtts")
-
-    def failing_gtts(*args, **kwargs):
-        raise RuntimeError("network unavailable")
-
-    gtts_module.gTTS = failing_gtts
-    with patch.dict(sys.modules, {"gtts": gtts_module}):
-        result = voice_assistant.generate_speech("Hello")
-
-    assert result is None
-
-
 def test_build_review_context_handles_missing_results():
     assert "No code review" in voice_assistant.build_review_context()
     assert "No code review" in voice_assistant.build_review_context(
@@ -169,3 +151,29 @@ def test_repository_context_includes_only_bounded_file_summaries():
     assert files[0]["path"] == "file-0.py"
     assert files[-1]["path"] == "file-19.py"
     assert all("content" not in item for item in files)
+
+
+def test_full_analysis_formats_review_and_complexity():
+    report = voice_assistant.build_full_analysis(
+        review_result={
+            "summary": "The parser needs validation",
+            "overall_score": 7,
+            "bugs": [{"line": 12, "severity": "high", "description": "Unchecked input"}],
+            "improvements": [{"title": "Add validation", "detail": "Validate every input"}],
+        },
+        complexity_result={
+            "method": "radon",
+            "average_complexity": 4.2,
+            "rating": "A",
+            "maintainability_index": 80,
+        },
+    )
+
+    assert "Overall code quality score: 7/10" in report
+    assert "Unchecked input" in report
+    assert "average complexity 4.2" in report
+    assert "Maintainability index: 80" in report
+
+
+def test_full_analysis_without_results_has_clear_fallback():
+    assert voice_assistant.build_full_analysis() == "No completed code review is available yet."
