@@ -9,6 +9,12 @@ from utils import (
     format_bug_entry,
     format_improvement_entry,
 )
+from voice_assistant import (
+    build_review_context,
+    generate_assistant_response,
+    generate_speech,
+    transcribe_and_interpret_audio,
+)
 
 try:
     from streamlit_ace import st_ace
@@ -40,6 +46,8 @@ if "complexity_result" not in st.session_state:
     st.session_state.complexity_result = None
 if "repository_result" not in st.session_state:
     st.session_state.repository_result = None
+if "voice_chat_history" not in st.session_state:
+    st.session_state.voice_chat_history = []
 
 st.subheader("Your Code")
 
@@ -181,7 +189,7 @@ st.markdown("---")
 st.subheader("🐙 Tech Spec Analyser – GitHub Repository Analysis")
 st.caption(
     "Analyse supported source files from a public GitHub repository. "
-    "Files are sent to Gemini for analysis; do not submit code you are not permitted to share."
+    "Files are sent to an AI provider for analysis; do not submit code you are not permitted to share."
 )
 repository_url = st.text_input(
     "Public GitHub repository URL",
@@ -206,7 +214,7 @@ if st.button("Analyze Repository", type="primary", key="analyze_repository"):
                     progress_bar.progress(completed / total, text="Reviewing {}/{} files".format(completed, total))
                     status_text.caption("Currently reviewing: {}".format(current_path))
 
-                with st.spinner("Gemini is reviewing repository files..."):
+                with st.spinner("TechSpecAnalyser is reviewing your code..."):
                     review_data = review_repo_files(repository_data["files"], update_review_progress)
                 progress_bar.empty()
                 status_text.empty()
@@ -245,7 +253,7 @@ if repo_result:
     if repository_data.get("tree_truncated"):
         st.warning("GitHub returned a truncated file tree; the detected file count may be incomplete.")
     if review_data.get("failed_files"):
-        st.warning("{} file(s) could not be reviewed by Gemini; other file results are available below.".format(review_data["failed_files"]))
+        st.warning("{} file(s) could not be reviewed; other file results are available below.".format(review_data["failed_files"]))
     if repository_data.get("fetch_errors"):
         with st.expander("Files skipped during download ({})".format(len(repository_data["fetch_errors"]))):
             for item in repository_data["fetch_errors"]:
@@ -341,3 +349,70 @@ if repo_result:
         if improved_code:
             with st.expander("AI-generated improved version"):
                 st.code(improved_code, language=selected["language"].lower())
+
+
+# ---------- Voice assistant ----------
+st.markdown("---")
+st.subheader("Voice Assistant")
+st.caption("Ask a spoken or typed programming question about the current analysis or any general programming topic.")
+
+speak_response = st.checkbox("Speak Response", value=False)
+
+def add_assistant_message(question, assistant_history):
+    review_context = build_review_context(
+        review_result=st.session_state.review_result,
+        complexity_result=st.session_state.complexity_result,
+        repository_result=st.session_state.repository_result,
+    )
+    answer = generate_assistant_response(
+        question,
+        conversation_history=assistant_history,
+        review_context=review_context,
+    )
+    st.session_state.voice_chat_history.append({"role": "user", "content": question})
+    assistant_entry = {"role": "assistant", "content": answer}
+    if speak_response:
+        assistant_entry["audio"] = generate_speech(answer)
+    st.session_state.voice_chat_history.append(assistant_entry)
+
+
+if hasattr(st, "audio_input"):
+    recorded_audio = st.audio_input(
+        "Ask by microphone",
+        key="voice_microphone",
+        help="Record a programming question.",
+    )
+else:
+    recorded_audio = None
+    st.info("Microphone input is not available in this Streamlit version; use the typed question below.")
+
+if recorded_audio is not None:
+    if st.button("Interpret Recording", key="interpret_voice"):
+        audio_bytes = recorded_audio.getvalue()
+        question = transcribe_and_interpret_audio(audio_bytes, "audio/wav")
+        if question:
+            add_assistant_message(question, st.session_state.voice_chat_history[-8:])
+            st.rerun()
+        else:
+            st.warning("No programming question could be understood from the recording.")
+
+with st.form("voice_question_form", clear_on_submit=True):
+    typed_question = st.text_input("Typed question")
+    submit_question = st.form_submit_button("Ask Assistant")
+
+if submit_question:
+    if typed_question.strip():
+        add_assistant_message(typed_question.strip(), st.session_state.voice_chat_history[-8:])
+        st.rerun()
+    else:
+        st.warning("Enter a programming question.")
+
+for message in st.session_state.voice_chat_history:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if message["role"] == "assistant" and message.get("audio"):
+            st.audio(message["audio"], format="audio/mp3")
+
+if st.button("Clear Conversation"):
+    st.session_state.voice_chat_history = []
+    st.rerun()
