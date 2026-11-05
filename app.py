@@ -1,5 +1,5 @@
 import streamlit as st
-from reviewer import review_code, review_repo_files
+from reviewer import review_code, review_repo_files, probe_deepseek_connectivity
 from complexity import analyze_complexity
 from github_fetcher import GitHubFetchError, fetch_public_repository
 from utils import (
@@ -56,6 +56,16 @@ with st.sidebar:
         "Configure `DEEPSEEK_API_KEY` for DeepSeek, or `GEMINI_API_KEY` "
         "as an environment variable or Streamlit secret for Gemini."
     )
+    if ai_provider == "DeepSeek" and st.button("Test DeepSeek connection"):
+        connectivity = probe_deepseek_connectivity()
+        if connectivity["connected"]:
+            st.success(
+                "DeepSeek connection verified with model {}.".format(
+                    connectivity["model"]
+                )
+            )
+        else:
+            st.error(connectivity["error"])
 
 st.subheader("Your Code")
 

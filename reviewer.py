@@ -29,6 +29,15 @@ LOGGER = logging.getLogger(__name__)
 class MissingAIConfigurationError(EnvironmentError):
     """Raised when a selected provider has no API credential."""
 
+
+def get_secret(name: str) -> str | None:
+    """Read a named Streamlit secret without propagating missing-secrets errors."""
+    try:
+        value = st.secrets.get(name)
+    except (KeyError, StreamlitSecretNotFoundError, AttributeError, FileNotFoundError):
+        return None
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
 SYSTEM_PROMPT = """
 You are an experienced senior software engineer and security-focused code reviewer.
 
@@ -79,10 +88,7 @@ def get_client() -> genai.Client:
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-        try:
-            api_key = st.secrets.get("GEMINI_API_KEY")
-        except (KeyError, StreamlitSecretNotFoundError):
-            api_key = None
+        api_key = get_secret("GEMINI_API_KEY")
 
     if not api_key:
         raise MissingAIConfigurationError(
@@ -97,10 +103,7 @@ def get_deepseek_client() -> Any:
     """Create an OpenAI-compatible client configured for DeepSeek."""
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
-        try:
-            api_key = st.secrets.get("DEEPSEEK_API_KEY")
-        except (KeyError, StreamlitSecretNotFoundError, AttributeError):
-            api_key = None
+        api_key = get_secret("DEEPSEEK_API_KEY")
     if not api_key:
         raise MissingAIConfigurationError(
             "DEEPSEEK_API_KEY not found. Set it as an environment variable "
@@ -124,11 +127,8 @@ def _selected_ai_provider() -> str:
         return configured
     if os.getenv("DEEPSEEK_API_KEY"):
         return "deepseek"
-    try:
-        if st.secrets.get("DEEPSEEK_API_KEY"):
-            return "deepseek"
-    except (KeyError, StreamlitSecretNotFoundError, AttributeError):
-        pass
+    if get_secret("DEEPSEEK_API_KEY"):
+        return "deepseek"
     return "gemini"
 
 
@@ -268,6 +268,46 @@ def _call_ai(code: str, language: str, provider: str, file_name: str = "<input>"
         },
     )
     return getattr(response, "text", None) or ""
+
+
+def probe_deepseek_connectivity() -> dict[str, Any]:
+    """Make a real, minimal DeepSeek API request and return non-secret status data."""
+    try:
+        client = get_deepseek_client()
+        response = client.chat.completions.create(
+            model=DEEPSEEK_MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "Return one valid JSON object only."},
+                {"role": "user", "content": '{"status":"connected"}'},
+            ],
+            max_tokens=100,
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = response.choices[0].message.content
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("DeepSeek returned an empty connectivity response.")
+        parsed = safe_json_parse(content)
+        if parsed.get("error"):
+            raise ValueError(parsed["summary"])
+        return {
+            "connected": True,
+            "provider": "DeepSeek",
+            "model": DEEPSEEK_MODEL_NAME,
+            "base_url": DEEPSEEK_BASE_URL,
+            "response": parsed,
+        }
+    except Exception as exc:
+        LOGGER.warning("DeepSeek connectivity test failed: %s", _safe_diagnostic(exc))
+        error, status = _provider_error_message(exc, "deepseek")
+        return {
+            "connected": False,
+            "provider": "DeepSeek",
+            "model": DEEPSEEK_MODEL_NAME,
+            "base_url": DEEPSEEK_BASE_URL,
+            "status": status,
+            "error": error,
+        }
 
 
 def build_user_prompt(code: str, language: str, file_name: str = "<input>") -> str:

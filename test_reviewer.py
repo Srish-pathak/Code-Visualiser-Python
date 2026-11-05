@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from complexity import analyze_complexity
-from reviewer import review_code, review_repo_files
+from reviewer import review_code, review_repo_files, probe_deepseek_connectivity
 
 
 @pytest.fixture(autouse=True)
@@ -272,6 +272,36 @@ def test_explicit_gemini_fallback(monkeypatch):
 
     assert result["provider_used"] == "Gemini fallback"
     assert result["summary"] == "Gemini fallback"
+
+
+def test_repository_review_uses_selected_provider(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    files = [{"path": "main.py", "language": "Python", "content": "print(1)\n"}]
+
+    with patch("reviewer.review_code", return_value={
+        "summary": "DeepSeek reviewed",
+        "bugs": [],
+        "improvements": [],
+        "overall_score": 8,
+        "improved_code": "",
+        "analysis_status": {"static": "completed", "ai": "completed"},
+    }) as review:
+        review_repo_files(files, provider="deepseek")
+
+    review.assert_called_once_with("print(1)\n", "Python", "main.py", "deepseek")
+
+
+def test_deepseek_connectivity_response_shape(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    client = _successful_deepseek_client('{"status":"connected"}')
+
+    with patch("reviewer.get_deepseek_client", return_value=client):
+        result = probe_deepseek_connectivity()
+
+    assert result["connected"] is True
+    assert result["provider"] == "DeepSeek"
+    assert result["model"] == "deepseek-flash"
+    assert result["response"]["status"] == "connected"
 
 
 @pytest.mark.parametrize(
