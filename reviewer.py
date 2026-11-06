@@ -19,6 +19,7 @@ from static_analysis import analyze_static
 from syntax_checker import check_syntax
 from utils import safe_json_parse
 
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 # "deepseek-chat" was retired by DeepSeek on 2026-07-24; V4 Flash is its replacement.
 # Legacy names are mapped automatically so an old DEEPSEEK_MODEL setting keeps working.
 LEGACY_MODEL_ALIASES = {"deepseek-chat": "deepseek-v4-flash", "deepseek-reasoner": "deepseek-v4-flash"}
@@ -26,7 +27,42 @@ _requested_model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip() or "
 DEEPSEEK_MODEL_NAME = LEGACY_MODEL_ALIASES.get(_requested_model, _requested_model)
 # JSON-only reviews should not spend tokens on (or be broken by) thinking mode.
 DEEPSEEK_EXTRA_BODY = {"thinking": {"type": "disabled"}}
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+# Free alternatives. The provider is detected from the pasted key's prefix, so
+# the sidebar box accepts a DeepSeek, Google Gemini or Groq key. Override the
+# model with the AI_MODEL environment variable if a provider renames its models.
+PROVIDERS = {
+    "DeepSeek": {"base_url": DEEPSEEK_BASE_URL, "model": DEEPSEEK_MODEL_NAME, "extra_body": DEEPSEEK_EXTRA_BODY},
+    "Gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "model": "gemini-2.5-flash", "extra_body": None,
+    },
+    "Groq": {"base_url": "https://api.groq.com/openai/v1", "model": "openai/gpt-oss-120b", "extra_body": None},
+}
+
+
+def _resolve_key(api_key: str | None = None) -> str:
+    return (api_key or "").strip() or os.getenv("DEEPSEEK_API_KEY") or get_secret("DEEPSEEK_API_KEY") or ""
+
+
+def detect_provider(api_key: str | None = None) -> str:
+    """Pick the provider from the key format (DeepSeek is the default)."""
+    key = _resolve_key(api_key)
+    if key.startswith("AIza"):
+        return "Gemini"
+    if key.startswith("gsk_"):
+        return "Groq"
+    return "DeepSeek"
+
+
+def provider_settings(api_key: str | None = None) -> dict[str, Any]:
+    name = detect_provider(api_key)
+    settings = dict(PROVIDERS[name])
+    if name != "DeepSeek" and os.getenv("AI_MODEL"):
+        settings["model"] = os.getenv("AI_MODEL", "").strip() or settings["model"]
+    settings["name"] = name
+    return settings
+
 MAX_SOURCE_CHARACTERS = 40_000
 LOGGER = logging.getLogger(__name__)
 
@@ -95,7 +131,7 @@ def get_deepseek_client(api_key: str | None = None) -> Any:
     kept only in the user's session), the DEEPSEEK_API_KEY environment variable,
     or the DEEPSEEK_API_KEY Streamlit secret.
     """
-    api_key = (api_key or "").strip() or os.getenv("DEEPSEEK_API_KEY") or get_secret("DEEPSEEK_API_KEY")
+    api_key = _resolve_key(api_key)
     if not api_key:
         raise MissingAIConfigurationError(
             "DEEPSEEK_API_KEY not found. Paste a key in the sidebar, set it as an "
@@ -106,7 +142,7 @@ def get_deepseek_client(api_key: str | None = None) -> Any:
 
     return OpenAI(
         api_key=api_key,
-        base_url=DEEPSEEK_BASE_URL,
+        base_url=provider_settings(api_key)["base_url"],
         timeout=60.0,
         max_retries=1,
     )
@@ -126,11 +162,10 @@ def _safe_diagnostic(exc: Exception) -> str:
     return text[:500]
 
 
-def _provider_error_message(exc: Exception) -> tuple[str, str]:
+def _provider_error_message(exc: Exception, provider_name: str = "DeepSeek") -> tuple[str, str]:
     """Return a safe provider name, status, and message without exposing credentials."""
     text = "{} {}".format(type(exc).__name__, exc)
     lowered = text.lower()
-    provider_name = "DeepSeek"
     status_code = getattr(exc, "status_code", None)
     code = getattr(exc, "code", None)
     status = str(status_code or code or "")
@@ -165,8 +200,8 @@ def _provider_error_message(exc: Exception) -> tuple[str, str]:
         )
     if "model" in lowered and any(k in lowered for k in ("not exist", "not found", "invalid model")):
         return (
-            "{} model '{}' is not available. Set DEEPSEEK_MODEL to deepseek-v4-flash or deepseek-v4-pro.".format(
-                provider_name, DEEPSEEK_MODEL_NAME),
+            "{} model '{}' is not available. Set DEEPSEEK_MODEL (or AI_MODEL for Gemini/Groq) to a model your account can use.".format(
+                provider_name, provider_settings().get("model")),
             "model_unavailable",
         )
     invalid_response = (
@@ -223,10 +258,12 @@ def _call_ai(code: str, language: str, file_name: str = "<input>", api_key: str 
     """Call DeepSeek and return its response text (retries transient errors)."""
     prompt = build_user_prompt(code, language, file_name)
     client = get_deepseek_client(api_key)
+    settings = provider_settings(api_key)
+    extra = {"extra_body": settings["extra_body"]} if settings["extra_body"] else {}
     for attempt in range(3):
         try:
             response = client.chat.completions.create(
-                model=DEEPSEEK_MODEL_NAME,
+                model=settings["model"],
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
@@ -234,7 +271,7 @@ def _call_ai(code: str, language: str, file_name: str = "<input>", api_key: str 
                 temperature=0.2,
                 max_tokens=4000,
                 response_format={"type": "json_object"},
-                extra_body=DEEPSEEK_EXTRA_BODY,
+                **extra,
             )
             break
         except Exception as exc:
@@ -253,8 +290,10 @@ def probe_deepseek_connectivity(api_key: str | None = None) -> dict[str, Any]:
     """Make a real, minimal DeepSeek API request and return non-secret status data."""
     try:
         client = get_deepseek_client(api_key)
+        settings = provider_settings(api_key)
+        extra = {"extra_body": settings["extra_body"]} if settings["extra_body"] else {}
         response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL_NAME,
+            model=settings["model"],
             messages=[
                 {"role": "system", "content": "Return one valid JSON object only."},
                 {"role": "user", "content": '{"status":"connected"}'},
@@ -262,7 +301,7 @@ def probe_deepseek_connectivity(api_key: str | None = None) -> dict[str, Any]:
             max_tokens=100,
             temperature=0,
             response_format={"type": "json_object"},
-            extra_body=DEEPSEEK_EXTRA_BODY,
+            **extra,
         )
         content = response.choices[0].message.content
         if not isinstance(content, str) or not content.strip():
@@ -272,19 +311,20 @@ def probe_deepseek_connectivity(api_key: str | None = None) -> dict[str, Any]:
             raise ValueError(parsed["summary"])
         return {
             "connected": True,
-            "provider": "DeepSeek",
-            "model": DEEPSEEK_MODEL_NAME,
-            "base_url": DEEPSEEK_BASE_URL,
+            "provider": settings["name"],
+            "model": settings["model"],
+            "base_url": settings["base_url"],
             "response": parsed,
         }
     except Exception as exc:
         LOGGER.warning("DeepSeek connectivity test failed: %s", _safe_diagnostic(exc))
-        error, status = _provider_error_message(exc)
+        settings = provider_settings(api_key)
+        error, status = _provider_error_message(exc, settings["name"])
         return {
             "connected": False,
-            "provider": "DeepSeek",
-            "model": DEEPSEEK_MODEL_NAME,
-            "base_url": DEEPSEEK_BASE_URL,
+            "provider": settings["name"],
+            "model": settings["model"],
+            "base_url": settings["base_url"],
             "status": status,
             "error": error,
         }
@@ -364,7 +404,7 @@ def review_code(
             raise ValueError(ai_result["summary"])
         _validate_ai_result(ai_result, file_name)
     except Exception as exc:
-        message, ai_status = _provider_error_message(exc)
+        message, ai_status = _provider_error_message(exc, detect_provider(api_key))
         return {
             "bugs": static_bugs,
             "improvements": [],
