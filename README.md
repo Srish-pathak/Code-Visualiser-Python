@@ -1,313 +1,101 @@
-[06:57, 06/11/2026] सृष्टि पाठक: # TechSpecAnalyser (CodeLens AI)
+# Tech Spec Analyser
 
-TechSpecAnalyser is a Streamlit application for inspecting source code and public GitHub repositories. It combines deterministic syntax, AST, and Radon analysis with optional AI-generated observations from Google Gemini or DeepSeek.
+A space-themed Streamlit app that reviews source code with **deterministic static analysis** (syntax, AST, Radon, security patterns) and an optional **DeepSeek** AI review, for pasted code or public GitHub repositories.
 
-## Problem Statement
+Static and AI results are kept separate: if DeepSeek is unavailable, the offline findings are still shown.
 
-Code reviews and documentation are time-consuming, and useful feedback is difficult to obtain consistently. TechSpecAnalyser provides a central interface for static-analysis findings and AI-assisted review observations while keeping the two analysis types distinct.
+## Quick start (3 steps)
 
-## Objectives
-
-- Run deterministic analysis locally without an AI API.
-- Detect syntax errors and selected AST issues in Python source.
-- Measure Python cyclomatic complexity and maintainability.
-- Produce optional …
-[07:18, 06/11/2026] सृष्टि पाठक: <<<<<<< HEAD
-=======
-TechSpecAnalyser is a Streamlit application for inspecting source code and public GitHub repositories. It combines deterministic syntax, AST, and Radon analysis with optional AI-generated observations from Google Gemini or DeepSeek.
-
-## Problem Statement
-
-Code reviews and documentation are time-consuming, and useful feedback is difficult to obtain consistently. TechSpecAnalyser provides a central interface for static-analysis findings and AI-assisted review observations while keeping the two analysis types distinct.
-
-## Objectives
-
-- Run deterministic analysis locally without an AI API.
-- Detect syntax errors and selected AST issues in Python source.
-- Measure Python cyclomatic complexity and maintainability.
-- Produce optional AI summaries, bug observations, improvement suggestions, and improved code.
-- Review supported source files from public GitHub repositories.
-- Keep provider credentials out of source code and presentation output.
-
-## Implemented Features
-
-- Manual source-code review through Streamlit.
-- Python syntax validation.
-- Python AST-based function argument validation.
-- Radon cyclomatic complexity and maintainability index analysis for Python.
-- Optional Gemini review.
-- Optional DeepSeek review through an OpenAI-compatible API client.
-- Existing JSON review schema for both AI providers.
-- Repository URL validation and recursive repository file discovery.
-- Default-branch detection and branch-name handling with slashes.
-- Supported-extension filtering and repository/file limits.
-- Per-file repository failure isolation.
-- Repository review counters for completed, failed, and AI-unavailable files.
-- Streamlit session-state storage for manual and repository results.
-
-## System Architecture
-
-mermaid
-flowchart LR
-    U[User] --> S[Streamlit UI]
-    S --> RC[Manual Review\nreviewer.review_code]
-    RC --> SY[Syntax checker]
-    RC --> AST[AST static analysis]
-    RC --> RAD[Radon complexity]
-
-    S --> GH[GitHub fetcher]
-    GH --> API[GitHub REST API]
-    GH --> RR[Repository review]
-    RR --> RC
-
-    RC --> PR{AI provider}
-    PR -->|DEEPSEEK_API_KEY| DS[DeepSeek API\nOpenAI-compatible client]
-    PR -->|no DeepSeek key| GM[Gemini API]
-    DS --> JSON[Normalize review JSON]
-    GM --> JSON
-    JSON --> S
-
-
-The sidebar can explicitly select DeepSeek or Gemini. Provider selection also follows
-AI_PROVIDER=deepseek|gemini. If neither provider is explicitly selected, DeepSeek
-is preferred when a DEEPSEEK_API_KEY is available and Gemini is otherwise used.
-Credentials can be supplied by environment variables locally or Streamlit secrets in
-deployment.
-
-## Technology Stack
-
-- Python
-- Streamlit
-- Google google-genai
-- OpenAI Python client for DeepSeek
-- Python ast module
-- Radon
-- GitHub REST API
-- pytest
-
-## Methodology
-
-1. The user enters source code or selects a public GitHub repository.
-2. Empty input and Python syntax errors are identified locally.
-3. Python static analysis checks AST call arguments and reports deterministic findings.
-4. Radon calculates Python complexity details and maintainability metrics when supported.
-5. The selected AI provider receives the source and a structured JSON-only prompt.
-6. Provider responses are parsed and normalized to the application's review schema.
-7. Static findings, AI findings, and provider status are displayed separately.
-8. Repository reviews process files individually so one file failure does not invalidate the whole repository review.
-
-Static and AI output are independent: a provider failure does not remove successful syntax, AST, Radon, or repository-fetch results.
-
-## Static Analysis and AST Implementation
-
-- syntax_checker.py uses ast.parse() and returns syntax findings.
-- static_analysis.py visits AST nodes to detect positional argument mismatches based on Python callable signatures, when that information can be resolved.
-- complexity.py uses Radon to report cyclomatic complexity and maintainability index where applicable.
-- Local static analysis currently targets Python. Other editor languages are sent through the AI-provider path and do not receive Radon or Python AST analysis.
-
-## AI Provider Integration
-
-The AI response must preserve this schema:
-
-json
-{
-  "summary": "",
-  "bugs": [],
-  "improvements": [],
-  "complexity_notes": "",
-  "improved_code": "",
-  "overall_score": 8
-}
-
-
-### Gemini
-
-Gemini uses the Google Gen AI client, gemini-2.5-flash, GEMINI_API_KEY, and optionally Streamlit secrets.
-
-### DeepSeek
-
-DeepSeek uses the official OpenAI-compatible client with:
-
-- Base URL: https://api.deepseek.com
-- Model: deepseek-flash (current official default model)
-- Environment variable: DEEPSEEK_API_KEY
-- Optional environment override: DEEPSEEK_MODEL=deepseek-flash
-- JSON-object response mode
-
-No provider key is read from application source, logs, or returned UI messages.
-
-## GitHub Repository Integration
-
-github_fetcher.py validates public repository URLs and fetches repository contents through the GitHub REST API. The implementation:
-
-- Resolves repository branches and handles branch names containing /.
-- Filters by supported source-file extensions.
-- Applies repository and per-file limits.
-- Isolates individual download failures.
-- Returns counts for eligible, reviewed, skipped, and failed files.
-
-Repository limits and supported extensions are defined in [github_fetcher.py](github_fetcher.py) and should be treated as the source of truth.
-
-## Project Structure
-
-text
-app.py                 Streamlit entry point and result views
-reviewer.py            Provider orchestration and review aggregation
-github_fetcher.py      GitHub repository discovery and content fetching
-syntax_checker.py      Python syntax validation
-static_analysis.py     Python AST checks
-complexity.py          Radon complexity and maintainability analysis
-utils.py               JSON normalization and presentation helpers
-requirements.txt       Runtime and test dependencies
-test_reviewer.py       Review and provider tests
-test_api_key.py        Gemini and DeepSeek credential tests
-test_github_fetcher.py Repository-fetch tests
-
-
-## Installation
-
-Requirements:
-
-- Python 3.10 or newer
-- Git
-- A virtual environment is recommended
-
-bash
-git clone https://github.com/Srish-pathak/Code-Visualiser-Python.git
-cd Code-Visualiser-Python
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-
-
-On Windows:
-
-powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-
-
-## Environment Variables and Secrets
-
-Configure one provider for AI-assisted analysis:
-
-bash
-export DEEPSEEK_API_KEY="your-key"
-# Optional explicit provider selection:
-export AI_PROVIDER="deepseek"
-
-
-Or configure Gemini:
-
-bash
-export GEMINI_API_KEY="your-key"
-# Optional explicit provider selection:
-export AI_PROVIDER="gemini"
-
-
-DeepSeek credentials are read from the environment only. Gemini can also be configured in Streamlit secrets as:
-
-toml
-GEMINI_API_KEY = "your-key"
-
-
-Do not commit real keys, .env files, or Streamlit secrets.
-
-### Streamlit Community Cloud
-
-In the application settings, add these secrets under *Secrets*:
-
-toml
-DEEPSEEK_API_KEY = "your-key"
-AI_PROVIDER = "deepseek"
-
-
-For optional Gemini fallback:
-
-toml
-GEMINI_API_KEY = "your-key"
-AUTO_AI_FALLBACK = true
-
-
-The Streamlit sidebar also lets the user select the primary provider. Automatic
-fallback is shown only when it is enabled.
-
-## Running the Application
-
-bash
+```bash
+pip install -r requirements.txt
 streamlit run app.py
+```
 
+Then open http://localhost:8501 and:
 
-The default local address is usually http://localhost:8501.
+1. Click **Review My Code**. The sample code works immediately, with no key, using offline analysis.
+2. For the AI review, get a key from the DeepSeek platform and **paste it into the sidebar** (kept in your session only), then click **Test DeepSeek connection**.
+3. Click **Review My Code** again to see the full report with score, improvements and before/after code.
+
+Prefer not to paste the key? Either set an environment variable or copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`:
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."          # macOS/Linux
+$env:DEEPSEEK_API_KEY="sk-..."            # Windows PowerShell
+```
+
+## What you get
+
+| Section | Contents |
+| --- | --- |
+| Overview | AI summary and top issues |
+| Issues | Syntax, AST, security-pattern and AI findings with severity and line |
+| Improvements | Actionable suggestions |
+| Complexity | Radon cyclomatic complexity and maintainability (Python) |
+| Score | AI health score out of 10 |
+| Before / After | Original vs AI-improved code |
+| History | Previous reviews in the session, reopenable |
+| Export | Markdown and JSON reports |
+
+**GitHub Orbit** tab: paste a public repository URL (for example `https://github.com/owner/repo`) to review up to 30 supported files, with per-file isolation so one failure never stops the rest.
+
+## How it works
+
+1. Input: pasted code, an uploaded file, or a public GitHub repository.
+2. Local checks: empty input and Python syntax errors.
+3. Static analysis: AST call-argument checks plus offline pattern checks (`local_checks.py`).
+4. Complexity: Radon (Python).
+5. AI review: structured JSON-only prompt to DeepSeek (`deepseek-chat`, OpenAI-compatible client, bounded retries).
+6. Normalise and validate the response into one schema.
+7. Display static, AI and provider status separately.
+
+Review schema:
+
+```json
+{"summary": "", "bugs": [], "improvements": [], "complexity_notes": "", "improved_code": "", "overall_score": 8}
+```
+
+## Configuration
+
+| Setting | Purpose |
+| --- | --- |
+| Sidebar key box | Session-only DeepSeek key (easiest for testing) |
+| `DEEPSEEK_API_KEY` | Environment variable or Streamlit secret |
+| `DEEPSEEK_MODEL` | Optional model override (default `deepseek-chat`) |
+
+Provider errors are reported clearly: missing key, invalid key, insufficient balance, rate limit, timeout, network error, or malformed response.
+
+## Project structure
+
+```text
+app.py              Streamlit UI
+theme.py            Space theme CSS and components
+reviewer.py         DeepSeek integration and review orchestration
+local_checks.py     Offline security and quality checks
+static_analysis.py  AST call-signature checks
+syntax_checker.py   Python syntax validation
+complexity.py       Radon complexity metrics
+github_fetcher.py   Public repository fetching
+report.py           Markdown/JSON report builders
+utils.py            JSON parsing and presentation helpers
+test_*.py           Tests (all provider calls are mocked)
+```
 
 ## Testing
 
-Run the complete suite:
-
-bash
+```bash
 pytest -q
+```
 
-
-Compile Python files:
-
-bash
-python -m compileall -q .
-
-
-Provider tests use mocked clients and must not consume paid API quota or credits.
-
-## Actual Test Results
-
-Verified on 5 November 2026:
-
-- Total: 29 tests
-- Passed: 29
-- Failed: 0
-
-The suite includes syntax, static complexity, GitHub fetch, Gemini credential/provider, DeepSeek credential/provider, and repository aggregation tests. Provider tests use mocked clients and responses.
-
-## Application Screenshots
-
-> Placeholder: add the manual code-review dashboard screenshot here.
-
-> Placeholder: add the static-analysis findings screenshot here.
-
-> Placeholder: add the repository review summary screenshot here.
-
-> Placeholder: add the before/after improved-code screenshot here.
-
-## Security Considerations
-
-- API keys are read only from environment variables or supported Gemini Streamlit configuration.
-- Provider credentials are not printed in user-facing error text.
-- Error handling contains provider status and generic guidance rather than raw credential data.
-- Secret-like files should remain excluded through .gitignore.
-- Repository content is supplied to the selected AI provider only through the review prompt.
+Tests use mocked clients and never spend API credit. A live DeepSeek check is done with the sidebar **Test DeepSeek connection** button.
 
 ## Limitations
 
-- AI review quality depends on the selected provider and can produce incomplete or incorrect observations.
-- Static analysis is strongest for Python syntax and the implemented AST/Radon checks.
-- Some non-Python languages receive AI analysis but not local Radon or Python AST analysis.
-- A provider rate limit, permission failure, timeout, or malformed response disables only AI output.
-- Repository review depends on GitHub availability and public repository access.
-- Fetch and file limits are intentionally bounded; files outside them are skipped.
-- AI findings do not have a formally verified correctness percentage.
+- AI output can be incomplete or wrong; offline findings are the grounded baseline.
+- Radon and AST checks are Python-only; other languages get pattern checks and AI review.
+- GitHub requests are unauthenticated (rate-limited) and capped at 30 files per repository.
+- Source is sent to DeepSeek when a key is configured; don't submit code you may not share.
 
-## Future Enhancements
+## Project information
 
-- Add more language-specific deterministic analyzers.
-- Add explicit provider status and manual provider selection in the UI.
-- Add response-schema validation with provider-independent tests.
-- Add repository review history persistence.
-- Add configurable repository limits through validated configuration.
-- Expand AST checks and add focused false-positive tests.
-
-## Academic Project Information
-
-- Project: Engineering Project-I
-- Project name: TechSpecAnalyser (CodeLens AI)
-- Repository: https://github.com/Srish-pathak/Code-Visualiser-Python
-- Theme: Static-analysis-grounded automated code review and documentation support
->>>>>>> 17216b4 (Improve DeepSeek AI code review integration)
+Engineering Project-I, Central University of Jharkhand. Presented by Srishti Pathak; faculty guide Dr. Prashant Prashun.
