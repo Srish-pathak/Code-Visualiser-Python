@@ -41,8 +41,16 @@ PROVIDERS = {
 }
 
 
+def _clean_key(value: str) -> str:
+    """Remove whitespace, wrapping quotes and a pasted 'Bearer ' prefix."""
+    value = (value or "").strip().strip("\"'").strip()
+    if value.lower().startswith("bearer "):
+        value = value[7:].strip()
+    return value
+
+
 def _resolve_key(api_key: str | None = None) -> str:
-    return (api_key or "").strip() or os.getenv("DEEPSEEK_API_KEY") or get_secret("DEEPSEEK_API_KEY") or ""
+    return _clean_key(api_key or "") or _clean_key(os.getenv("DEEPSEEK_API_KEY") or "") or _clean_key(get_secret("DEEPSEEK_API_KEY") or "")
 
 
 def detect_provider(api_key: str | None = None) -> str:
