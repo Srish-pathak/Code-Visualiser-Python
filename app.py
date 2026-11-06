@@ -132,9 +132,9 @@ if result:
     st.subheader("Review Results")
     ai_status = result.get("analysis_status", {}).get("ai", "unknown")
     if ai_status != "completed":
-        st.warning(result.get("summary", "AI Review Unavailable — static analysis is still available."))
+        st.caption("Provider status: {} — static analysis remains available.".format(ai_status.replace("_", " ").title()))
     elif result.get("summary"):
-            st.info(result["summary"])
+        st.info(result["summary"])
 
     tab_bugs, tab_improve, tab_complexity, tab_score, tab_diff = st.tabs(
             ["🐛 Bugs", "💡 Improvements", "⚙️ Complexity", "📊 Score", "🔀 Before/After"]
