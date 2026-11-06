@@ -1,4 +1,7 @@
 import os
+import logging
+import re
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -17,19 +20,37 @@ from syntax_checker import check_syntax
 from utils import safe_json_parse
 
 MODEL_NAME = "gemini-2.5-flash"
-DEEPSEEK_MODEL_NAME = "deepseek-chat"
+DEEPSEEK_MODEL_NAME = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+MAX_SOURCE_CHARACTERS = 40_000
+LOGGER = logging.getLogger(__name__)
+
+
+class MissingAIConfigurationError(EnvironmentError):
+    """Raised when a selected provider has no API credential."""
+
+
+def get_secret(name: str) -> str | None:
+    """Read a named Streamlit secret without propagating missing-secrets errors."""
+    try:
+        value = st.secrets.get(name)
+    except (KeyError, StreamlitSecretNotFoundError, AttributeError, FileNotFoundError):
+        return None
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 SYSTEM_PROMPT = """
-You are a senior software engineer performing a code review.
+You are an experienced senior software engineer and security-focused code reviewer.
 
 You ALWAYS respond with ONLY ONE VALID JSON OBJECT.
-
 Never return markdown.
-
-Never return ```json
-
-Never explain anything outside JSON.
+Analyze the complete source code before identifying any finding.
+Report only evidence-based bugs, vulnerabilities, edge cases, performance issues,
+maintainability problems, and practical improvements.
+Do not invent line numbers, vulnerabilities, or problems that are unsupported by the code.
+Explain every finding in beginner-friendly language and provide a technically correct fix.
+For each issue in bugs or improvements, use the fields:
+"title", "severity" (Critical/High/Medium/Low), "category", "file",
+"line", "explanation", "why_it_matters", "suggested_solution", "corrected_code".
 
 Schema:
 
@@ -54,24 +75,23 @@ Schema:
 }
 
 Rules
-
 - Return JSON only.
-- improved_code should contain COMPLETE runnable code.
+- improved_code should contain COMPLETE runnable code when a correction is useful.
+- bugs may include security vulnerabilities only when evidence is present.
+- Line numbers must refer to the supplied source. Use "N/A" when unavailable.
+- Keep "overall_score" and "complexity_notes" transparent and evidence-based.
+- Keep suggestions practical and educational.
 - Don't invent bugs.
-- Keep suggestions educational.
 """
 def get_client() -> genai.Client:
     """Create a Gemini client using environment or Streamlit credentials."""
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-        try:
-            api_key = st.secrets.get("GEMINI_API_KEY")
-        except (KeyError, StreamlitSecretNotFoundError):
-            api_key = None
+        api_key = get_secret("GEMINI_API_KEY")
 
     if not api_key:
-        raise EnvironmentError(
+        raise MissingAIConfigurationError(
             "GEMINI_API_KEY not found. Set it as an environment variable "
             "or in Streamlit secrets."
         )
@@ -83,13 +103,21 @@ def get_deepseek_client() -> Any:
     """Create an OpenAI-compatible client configured for DeepSeek."""
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
-        raise EnvironmentError(
-            "DEEPSEEK_API_KEY not found. Set it as an environment variable."
+        api_key = get_secret("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise MissingAIConfigurationError(
+            "DEEPSEEK_API_KEY not found. Set it as an environment variable "
+            "or in Streamlit secrets."
         )
     if OpenAI is None:
         raise ImportError("The openai package is required for DeepSeek reviews.")
 
-    return OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+    return OpenAI(
+        api_key=api_key,
+        base_url=DEEPSEEK_BASE_URL,
+        timeout=60.0,
+        max_retries=1,
+    )
 
 
 def _selected_ai_provider() -> str:
@@ -99,7 +127,18 @@ def _selected_ai_provider() -> str:
         return configured
     if os.getenv("DEEPSEEK_API_KEY"):
         return "deepseek"
+    if get_secret("DEEPSEEK_API_KEY"):
+        return "deepseek"
     return "gemini"
+
+
+def _safe_diagnostic(exc: Exception) -> str:
+    """Return exception text with credentials and authorization headers removed."""
+    text = "{}: {}".format(type(exc).__name__, exc)
+    text = re.sub(r"(?i)(api[_ -]?key|authorization|bearer)\s*[:=]\s*[^\s,;]+", r"\1=<redacted>", text)
+    text = re.sub(r"(?i)(bearer\s+)[^\s]+", r"\1<redacted>", text)
+    text = re.sub(r"sk-[A-Za-z0-9_-]+", "<redacted>", text)
+    return text[:500]
 
 
 def _provider_error_message(exc: Exception, provider: str) -> tuple[str, str]:
@@ -110,6 +149,18 @@ def _provider_error_message(exc: Exception, provider: str) -> tuple[str, str]:
     status_code = getattr(exc, "status_code", None)
     code = getattr(exc, "code", None)
     status = str(status_code or code or "")
+    diagnostic = _safe_diagnostic(exc)
+    LOGGER.warning("%s provider error: %s", provider_name, diagnostic)
+
+    if isinstance(exc, MissingAIConfigurationError) or (
+        ("api key" in lowered or "api_key" in lowered)
+        and "not found" in lowered
+    ):
+        return (
+            "{} API key is not configured in the environment or Streamlit secrets. "
+            "Static analysis is still available.".format(provider_name),
+            "missing_configuration",
+        )
 
     if (
         "429" in text
@@ -121,6 +172,11 @@ def _provider_error_message(exc: Exception, provider: str) -> tuple[str, str]:
         return (
             "{} rate limit or quota reached. Static analysis is still available.".format(provider_name),
             "rate_limited",
+        )
+    if "insufficient balance" in lowered or "credit balance is not enough" in lowered:
+        return (
+            "{} account has insufficient balance. Add account credit or use another configured provider.".format(provider_name),
+            "insufficient_balance",
         )
     invalid_response = (
         ("empty" in lowered and "response" in lowered)
@@ -149,14 +205,6 @@ def _provider_error_message(exc: Exception, provider: str) -> tuple[str, str]:
             "{} access was denied. Check the API key and account permissions.".format(provider_name),
             "permission_denied",
         )
-    if (
-        ("api key" in lowered or "api_key" in lowered)
-        and "not found" in lowered
-    ):
-        return (
-            "{} API key is not configured. Static analysis is still available.".format(provider_name),
-            "invalid_api_key",
-        )
     is_timeout = (
         APITimeoutError is not None and isinstance(exc, APITimeoutError)
     ) or isinstance(exc, TimeoutError)
@@ -180,20 +228,30 @@ def _provider_error_message(exc: Exception, provider: str) -> tuple[str, str]:
     )
 
 
-def _call_ai(code: str, language: str, provider: str) -> str:
+def _call_ai(code: str, language: str, provider: str, file_name: str = "<input>") -> str:
     """Call the selected AI provider and return its response text."""
-    prompt = build_user_prompt(code, language)
+    prompt = build_user_prompt(code, language, file_name)
     if provider == "deepseek":
         client = get_deepseek_client()
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL_NAME,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.2,
-            response_format={"type": "json_object"},
-        )
+        for attempt in range(3):
+            try:
+                response = client.chat.completions.create(
+                    model=DEEPSEEK_MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.2,
+                    max_tokens=4000,
+                    response_format={"type": "json_object"},
+                )
+                break
+            except Exception as exc:
+                status = getattr(exc, "status_code", None)
+                transient = status in {408, 409, 429, 500, 502, 503, 504}
+                if not transient or attempt == 2:
+                    raise
+                time.sleep(0.5 * (2 ** attempt))
         try:
             return response.choices[0].message.content or ""
         except (AttributeError, IndexError, TypeError):
@@ -212,21 +270,74 @@ def _call_ai(code: str, language: str, provider: str) -> str:
     return getattr(response, "text", None) or ""
 
 
-def build_user_prompt(code: str, language: str) -> str:
-    """Build the code-review prompt sent to Gemini."""
+def probe_deepseek_connectivity() -> dict[str, Any]:
+    """Make a real, minimal DeepSeek API request and return non-secret status data."""
+    try:
+        client = get_deepseek_client()
+        response = client.chat.completions.create(
+            model=DEEPSEEK_MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "Return one valid JSON object only."},
+                {"role": "user", "content": '{"status":"connected"}'},
+            ],
+            max_tokens=100,
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = response.choices[0].message.content
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("DeepSeek returned an empty connectivity response.")
+        parsed = safe_json_parse(content)
+        if parsed.get("error"):
+            raise ValueError(parsed["summary"])
+        return {
+            "connected": True,
+            "provider": "DeepSeek",
+            "model": DEEPSEEK_MODEL_NAME,
+            "base_url": DEEPSEEK_BASE_URL,
+            "response": parsed,
+        }
+    except Exception as exc:
+        LOGGER.warning("DeepSeek connectivity test failed: %s", _safe_diagnostic(exc))
+        error, status = _provider_error_message(exc, "deepseek")
+        return {
+            "connected": False,
+            "provider": "DeepSeek",
+            "model": DEEPSEEK_MODEL_NAME,
+            "base_url": DEEPSEEK_BASE_URL,
+            "status": status,
+            "error": error,
+        }
+
+
+def build_user_prompt(code: str, language: str, file_name: str = "<input>") -> str:
+    """Build the provider-neutral source-review prompt."""
+    source = code
+    if len(source) > MAX_SOURCE_CHARACTERS:
+        source = (
+            source[:MAX_SOURCE_CHARACTERS]
+            + "\n\n[TRUNCATED: source exceeded the review input limit of 40,000 characters]"
+        )
     return f"""
-Review this {language} code.
+Review this {language} source file carefully.
+
+File name: {file_name}
 
 Code:
 
 ```{language.lower()}
-{code}
+{source}
 ```
 
 Return your review strictly as the JSON schema described in your instructions."""
 
 
-def review_code(code: str, language: str) -> dict[str, Any]:
+def review_code(
+    code: str,
+    language: str,
+    file_name: str = "<input>",
+    provider: str | None = None,
+) -> dict[str, Any]:
     """Run syntax, static, and Gemini review analysis for one code sample."""
     if not code or not code.strip():
         return {
@@ -258,22 +369,56 @@ def review_code(code: str, language: str) -> dict[str, Any]:
         }
 
     static_bugs = analyze_static(code, language)
-    complexity = analyze_complexity(code, language) if language == "Python" else None
+    complexity = analyze_complexity(code, language)
 
-    provider = _selected_ai_provider()
+    provider = provider or _selected_ai_provider()
     provider_name = "DeepSeek" if provider == "deepseek" else "Gemini"
 
     # Provider failures are kept separate from static analysis so deterministic
     # findings remain available even when the AI service is unavailable.
     try:
-        response_text = _call_ai(code, language, provider)
+        response_text = _call_ai(code, language, provider, file_name)
         if not response_text:
             raise ValueError("{} returned an empty or incomplete response.".format(provider_name))
         ai_result = safe_json_parse(response_text)
         if ai_result.get("error"):
             raise ValueError(ai_result["summary"])
+        _validate_ai_result(ai_result, file_name)
         result = ai_result
     except Exception as exc:
+        if (
+            provider == "deepseek"
+            and os.getenv("AUTO_AI_FALLBACK", "").strip().lower() in {"1", "true", "yes"}
+        ):
+            try:
+                gemini_key = os.getenv("GEMINI_API_KEY")
+                if not gemini_key:
+                    try:
+                        gemini_key = st.secrets.get("GEMINI_API_KEY")
+                    except (KeyError, StreamlitSecretNotFoundError, AttributeError):
+                        gemini_key = None
+                if gemini_key:
+                    response_text = _call_ai(code, language, "gemini", file_name)
+                    if not response_text:
+                        raise ValueError("Gemini returned an empty or incomplete response.")
+                    ai_result = safe_json_parse(response_text)
+                    if ai_result.get("error"):
+                        raise ValueError(ai_result["summary"])
+                    _validate_ai_result(ai_result, file_name)
+                    result = ai_result
+                    result["provider_used"] = "Gemini fallback"
+                    result["primary_provider_error"] = _safe_diagnostic(exc)
+                    result["static_analysis"] = {"syntax": syntax_result, "findings": static_bugs}
+                    result["complexity"] = complexity
+                    result["analysis_status"] = {"static": "completed", "ai": "completed"}
+                    result["ai_findings"] = list(result.get("bugs", []))
+                    result["bugs"] = static_bugs + result.get("bugs", [])
+                    return result
+            except Exception as fallback_exc:
+                LOGGER.warning(
+                    "Gemini fallback failed after DeepSeek error: %s",
+                    _safe_diagnostic(fallback_exc),
+                )
         message, ai_status = _provider_error_message(exc, provider)
         return {
             "bugs": static_bugs,
@@ -286,8 +431,10 @@ def review_code(code: str, language: str) -> dict[str, Any]:
             "static_analysis": {"syntax": syntax_result, "findings": static_bugs},
             "complexity": complexity,
             "analysis_status": {"static": "completed", "ai": ai_status},
+            "ai_findings": [],
         }
 
+    result["ai_findings"] = list(result.get("bugs", []))
     result["bugs"] = static_bugs + result.get("bugs", [])
     result["static_analysis"] = {"syntax": syntax_result, "findings": static_bugs}
     result["complexity"] = complexity
@@ -295,9 +442,59 @@ def review_code(code: str, language: str) -> dict[str, Any]:
     return result
 
 
+def _validate_ai_result(result: dict[str, Any], file_name: str) -> None:
+    """Validate provider-neutral review fields without changing the public schema."""
+    required = {
+        "summary",
+        "bugs",
+        "improvements",
+        "complexity_notes",
+        "improved_code",
+        "overall_score",
+    }
+    missing = required.difference(result)
+    if missing:
+        raise ValueError("AI response is missing required fields: {}".format(", ".join(sorted(missing))))
+    if not isinstance(result["summary"], str) or not isinstance(result["complexity_notes"], str):
+        raise ValueError("AI response contains invalid text fields.")
+    if not isinstance(result["bugs"], list) or not isinstance(result["improvements"], list):
+        raise ValueError("AI response bugs and improvements must be arrays.")
+    if not isinstance(result["improved_code"], str):
+        raise ValueError("AI response improved_code must be text.")
+    try:
+        score = float(result["overall_score"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("AI response overall_score must be numeric.") from exc
+    if not 0 <= score <= 10:
+        raise ValueError("AI response overall_score must be between 0 and 10.")
+
+    for finding in result["bugs"] + result["improvements"]:
+        if not isinstance(finding, dict):
+            raise ValueError("AI findings must be objects.")
+        severity = finding.get("severity")
+        if severity is not None:
+            legacy_severity = str(severity).strip().lower()
+            normalized = {
+                "warning": "Medium",
+                "info": "Low",
+                "critical": "Critical",
+                "high": "High",
+                "medium": "Medium",
+                "low": "Low",
+            }.get(legacy_severity, legacy_severity.title())
+            if normalized.lower() not in {
+            "critical", "high", "medium", "low"
+            }:
+                raise ValueError("AI finding contains an invalid severity.")
+            finding["severity"] = normalized
+        finding.setdefault("file", file_name)
+        finding.setdefault("line", "N/A")
+
+
 def review_repo_files(
     files: list[dict[str, Any]],
     progress_callback: Callable[[int, int, str], None] | None = None,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Review fetched files individually, reusing ``review_code`` for each.
 
@@ -318,7 +515,7 @@ def review_repo_files(
         language = file_info.get("language", "")
         code = file_info.get("content", "")
         try:
-            review = review_code(code, language)
+            review = review_code(code, language, path, provider)
             if not isinstance(review, dict):
                 raise TypeError("The reviewer returned an invalid result.")
         except Exception as exc:

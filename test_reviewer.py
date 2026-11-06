@@ -4,7 +4,10 @@ from unittest.mock import patch
 import pytest
 
 from complexity import analyze_complexity
-from reviewer import review_code, review_repo_files
+from reviewer import review_code, review_repo_files, probe_deepseek_connectivity
+from static_analysis import analyze_static
+from syntax_checker import check_syntax
+from utils import safe_json_parse
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +72,52 @@ def test_high_complexity_python_is_measured():
     result = analyze_complexity(code, "Python")
     assert result["details"][0]["name"] == "complex_function"
     assert result["details"][0]["complexity"] >= 3
+
+
+def test_static_analysis_accepts_default_and_keyword_arguments():
+    code = """def greet(name, punctuation="!"):
+    return name + punctuation
+
+greet("Ada")
+greet(name="Ada", punctuation="?")
+"""
+    assert analyze_static(code, "Python") == []
+
+
+def test_syntax_error_is_returned_as_a_bug_list():
+    result = check_syntax("def broken(:\n", "Python")
+    assert isinstance(result["bugs"], list)
+    assert result["bugs"][0]["severity"] == "critical"
+
+
+def test_model_json_is_extracted_from_fenced_response():
+    result = safe_json_parse(
+        'Response:\n```json\n{"summary":"Valid","bugs":[],"improvements":[],"overall_score":8}\n```\n'
+    )
+    assert result["summary"] == "Valid"
+
+
+def test_non_python_complexity_is_explicitly_unsupported():
+    result = analyze_complexity("const value = 1;", "JavaScript")
+    assert result["status"] == "unsupported"
+
+
+def test_static_analysis_respects_positional_only_and_variadic_arguments():
+    code = """def collect(first, /, second=0, *extra, required, **options):
+    return first
+
+collect(1, required=2)
+collect(1, 2, 3, required=4, mode="fast")
+"""
+    assert analyze_static(code, "Python") == []
+
+    invalid = """def collect(first, /, required):
+    return first
+
+collect(required=1)
+collect(1, 2, 3)
+"""
+    assert analyze_static(invalid, "Python")
 
 
 @pytest.mark.parametrize(
@@ -161,10 +210,11 @@ def test_successful_deepseek_review(monkeypatch):
 
 def test_deepseek_missing_key_is_unavailable(monkeypatch):
     monkeypatch.setenv("AI_PROVIDER", "deepseek")
-    result = review_code("print(1)\n", "Python")
+    with patch("reviewer.st.secrets", {}):
+        result = review_code("print(1)\n", "Python")
 
     assert result["analysis_status"]["static"] == "completed"
-    assert result["analysis_status"]["ai"] == "invalid_api_key"
+    assert result["analysis_status"]["ai"] == "missing_configuration"
     assert result["summary"].startswith("AI Review Unavailable")
 
 
@@ -194,6 +244,113 @@ def test_deepseek_invalid_api_key_is_unavailable(monkeypatch):
         result = review_code("print(1)\n", "Python")
 
     assert result["analysis_status"]["ai"] == "invalid_api_key"
+
+
+def test_deepseek_request_parameters_and_response_schema(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    calls = {}
+
+    def create(**kwargs):
+        calls.update(kwargs)
+        content = (
+            '{"summary":"Reviewed","bugs":[{"line":1,"severity":"warning",'
+            '"description":"Improve it"}],"improvements":[{"title":"Rename",'
+            '"detail":"Use a clearer name"}],"complexity_notes":"Low complexity",'
+            '"overall_score":7,"improved_code":"print(2)"}'
+        )
+        message = SimpleNamespace(content=content)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+    with patch("reviewer.get_deepseek_client", return_value=client):
+        result = review_code("print(1)\n", "Python")
+
+    assert calls["model"] == "deepseek-flash"
+    assert calls["response_format"] == {"type": "json_object"}
+    assert calls["max_tokens"] == 4000
+    assert result["summary"] == "Reviewed"
+    assert result["bugs"]
+    assert result["improvements"]
+    assert result["complexity_notes"] == "Low complexity"
+    assert result["overall_score"] == 7
+    assert result["improved_code"] == "print(2)"
+
+
+def test_deepseek_insufficient_balance_is_distinct(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+
+    def fail(**kwargs):
+        raise RuntimeError("402 insufficient balance")
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fail))
+    )
+    with patch("reviewer.get_deepseek_client", return_value=client):
+        result = review_code("print(1)\n", "Python")
+
+    assert result["analysis_status"]["ai"] == "insufficient_balance"
+
+
+def test_deepseek_timeout_is_distinct(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+
+    def fail(**kwargs):
+        raise TimeoutError("DeepSeek request timed out")
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fail))
+    )
+    with patch("reviewer.get_deepseek_client", return_value=client):
+        result = review_code("print(1)\n", "Python")
+
+    assert result["analysis_status"]["ai"] == "timeout"
+
+
+def test_explicit_gemini_fallback(monkeypatch):
+    monkeypatch.setenv("AUTO_AI_FALLBACK", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    gemini_result = (
+        '{"summary":"Gemini fallback","bugs":[],"improvements":[],"complexity_notes":"Simple",'
+        '"overall_score":8,"improved_code":"print(1)"}'
+    )
+
+    with patch("reviewer._call_ai", side_effect=["", gemini_result]):
+        result = review_code("print(1)\n", "Python", provider="deepseek")
+
+    assert result["provider_used"] == "Gemini fallback"
+    assert result["summary"] == "Gemini fallback"
+
+
+def test_repository_review_uses_selected_provider(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    files = [{"path": "main.py", "language": "Python", "content": "print(1)\n"}]
+
+    with patch("reviewer.review_code", return_value={
+        "summary": "DeepSeek reviewed",
+        "bugs": [],
+        "improvements": [],
+        "overall_score": 8,
+        "improved_code": "",
+        "analysis_status": {"static": "completed", "ai": "completed"},
+    }) as review:
+        review_repo_files(files, provider="deepseek")
+
+    review.assert_called_once_with("print(1)\n", "Python", "main.py", "deepseek")
+
+
+def test_deepseek_connectivity_response_shape(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    client = _successful_deepseek_client('{"status":"connected"}')
+
+    with patch("reviewer.get_deepseek_client", return_value=client):
+        result = probe_deepseek_connectivity()
+
+    assert result["connected"] is True
+    assert result["provider"] == "DeepSeek"
+    assert result["model"] == "deepseek-flash"
+    assert result["response"]["status"] == "connected"
 
 
 @pytest.mark.parametrize(

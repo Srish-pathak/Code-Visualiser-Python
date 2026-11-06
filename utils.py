@@ -26,24 +26,34 @@ def safe_json_parse(raw_text: str) -> dict:
 
     cleaned = raw_text.strip()
 
-    # Strip markdown code fences if present
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+    cleaned = re.sub(r"^```(?:[A-Za-z0-9_-]+)?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned)
-
-    # If there's extra chatter, try to isolate the outermost {...} block
-    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-    if match:
-        cleaned = match.group(0)
 
     try:
         data = json.loads(cleaned)
+        if not isinstance(data, dict):
+            raise ValueError("Model response JSON must be an object.")
         return _normalize_response(data)
-    except json.JSONDecodeError as e:
-        return _fallback_response(f"Could not parse model response: {e}")
+    except (json.JSONDecodeError, ValueError) as direct_error:
+        decoder = json.JSONDecoder()
+        for index, character in enumerate(cleaned):
+            if character not in "{[":
+                continue
+            try:
+                data, _ = decoder.raw_decode(cleaned[index:])
+                if isinstance(data, dict):
+                    return _normalize_response(data)
+            except json.JSONDecodeError:
+                continue
+        return _fallback_response(
+            f"Could not parse model response: {direct_error}"
+        )
 
 
 def _normalize_response(data: dict) -> dict:
     """Ensure every expected key exists so app.py never KeyErrors."""
+    if not isinstance(data, dict):
+        raise ValueError("Model response JSON must be an object.")
     data.setdefault("bugs", [])
     data.setdefault("improvements", [])
     data.setdefault("complexity_notes", "No complexity notes provided.")
@@ -51,10 +61,17 @@ def _normalize_response(data: dict) -> dict:
     data.setdefault("improved_code", "")
     data.setdefault("summary", "")
 
+    if not isinstance(data.get("bugs"), list):
+        data["bugs"] = []
+    if not isinstance(data.get("improvements"), list):
+        data["improvements"] = []
+
     # Clamp score into 1-10 range defensively
     try:
         score = float(data["overall_score"])
-        data["overall_score"] = max(1, min(10, score))
+        if score != score:
+            raise ValueError
+        data["overall_score"] = max(0, min(10, score))
     except (TypeError, ValueError):
         data["overall_score"] = 5
 

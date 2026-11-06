@@ -19,9 +19,12 @@ def check_syntax(code: str, language: str) -> dict[str, Any]:
     except SyntaxError as error:
         return {
             "valid": False,
-            "bugs": {
-                "line": error.lineno,
-                "severity": "critical",
-                "description": f"SyntaxError: {error.msg}",
-            },
+            "bugs": [
+                {
+                    "line": error.lineno,
+                    "column": error.offset,
+                    "severity": "critical",
+                    "description": f"SyntaxError: {error.msg}",
+                }
+            ],
         }
