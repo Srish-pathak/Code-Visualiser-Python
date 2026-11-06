@@ -8,7 +8,7 @@ st.set_page_config(page_title="Tech Spec Analyser", page_icon="🪐", layout="wi
 from complexity import analyze_complexity
 from github_fetcher import GitHubFetchError, fetch_public_repository
 from report import build_json_report, build_markdown_report, build_repo_markdown
-from reviewer import has_deepseek_key, probe_deepseek_connectivity, review_code, review_repo_files
+from reviewer import detect_provider, has_deepseek_key, probe_deepseek_connectivity, review_code, review_repo_files
 from theme import (
     banner, finding_card, hero, inject_css, rank_badge, score_ring, stat_row, tip_card,
 )
@@ -95,14 +95,14 @@ def clear_results() -> None:
 
 # ---------- sidebar: just the key ----------
 with st.sidebar:
-    st.markdown("## 🔑 DeepSeek key")
+    st.markdown("## 🔑 AI key")
     st.text_input(
-        "DeepSeek API key", type="password", key="api_key", placeholder="sk-...",
+        "AI API key", type="password", key="api_key", placeholder="DeepSeek sk-…  ·  Gemini AIza…  ·  Groq gsk_…",
         label_visibility="collapsed", help="Kept only in this browser session. Never saved.",
     )
     api_key = st.session_state.api_key.strip() or None
     if has_deepseek_key(api_key):
-        st.success("AI review is on")
+        st.success("AI review is on ({})".format(detect_provider(api_key)))
         if st.button("Test connection", use_container_width=True):
             probe = probe_deepseek_connectivity(api_key)
             if probe["connected"]:
@@ -110,7 +110,7 @@ with st.sidebar:
             else:
                 st.error(probe["error"])
     else:
-        st.info("No key yet. You still get offline checks. Paste a key to turn on AI review.")
+        st.info("No key yet. You still get offline checks. Paste a free Gemini or Groq key (or a DeepSeek key) to turn on AI review.")
 
 hero("TECH SPEC ANALYSER", "Paste code, get bugs, fixes and a score")
 
