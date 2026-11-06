@@ -105,7 +105,10 @@ with st.sidebar:
         st.success("AI review is on")
         if st.button("Test connection", use_container_width=True):
             probe = probe_deepseek_connectivity(api_key)
-            st.success("Connected") if probe["connected"] else st.error(probe["error"])
+            if probe["connected"]:
+                st.success("Connected to {} ({})".format(probe["provider"], probe["model"]))
+            else:
+                st.error(probe["error"])
     else:
         st.info("No key yet. You still get offline checks. Paste a key to turn on AI review.")
 
