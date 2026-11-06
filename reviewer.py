@@ -369,7 +369,7 @@ def review_code(
         }
 
     static_bugs = analyze_static(code, language)
-    complexity = analyze_complexity(code, language) if language == "Python" else None
+    complexity = analyze_complexity(code, language)
 
     provider = provider or _selected_ai_provider()
     provider_name = "DeepSeek" if provider == "deepseek" else "Gemini"
@@ -411,6 +411,7 @@ def review_code(
                     result["static_analysis"] = {"syntax": syntax_result, "findings": static_bugs}
                     result["complexity"] = complexity
                     result["analysis_status"] = {"static": "completed", "ai": "completed"}
+                    result["ai_findings"] = list(result.get("bugs", []))
                     result["bugs"] = static_bugs + result.get("bugs", [])
                     return result
             except Exception as fallback_exc:
@@ -430,8 +431,10 @@ def review_code(
             "static_analysis": {"syntax": syntax_result, "findings": static_bugs},
             "complexity": complexity,
             "analysis_status": {"static": "completed", "ai": ai_status},
+            "ai_findings": [],
         }
 
+    result["ai_findings"] = list(result.get("bugs", []))
     result["bugs"] = static_bugs + result.get("bugs", [])
     result["static_analysis"] = {"syntax": syntax_result, "findings": static_bugs}
     result["complexity"] = complexity
@@ -462,8 +465,8 @@ def _validate_ai_result(result: dict[str, Any], file_name: str) -> None:
         score = float(result["overall_score"])
     except (TypeError, ValueError) as exc:
         raise ValueError("AI response overall_score must be numeric.") from exc
-    if not 1 <= score <= 10:
-        raise ValueError("AI response overall_score must be between 1 and 10.")
+    if not 0 <= score <= 10:
+        raise ValueError("AI response overall_score must be between 0 and 10.")
 
     for finding in result["bugs"] + result["improvements"]:
         if not isinstance(finding, dict):

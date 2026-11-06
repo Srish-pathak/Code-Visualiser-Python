@@ -5,6 +5,9 @@ import pytest
 
 from complexity import analyze_complexity
 from reviewer import review_code, review_repo_files, probe_deepseek_connectivity
+from static_analysis import analyze_static
+from syntax_checker import check_syntax
+from utils import safe_json_parse
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +72,52 @@ def test_high_complexity_python_is_measured():
     result = analyze_complexity(code, "Python")
     assert result["details"][0]["name"] == "complex_function"
     assert result["details"][0]["complexity"] >= 3
+
+
+def test_static_analysis_accepts_default_and_keyword_arguments():
+    code = """def greet(name, punctuation="!"):
+    return name + punctuation
+
+greet("Ada")
+greet(name="Ada", punctuation="?")
+"""
+    assert analyze_static(code, "Python") == []
+
+
+def test_syntax_error_is_returned_as_a_bug_list():
+    result = check_syntax("def broken(:\n", "Python")
+    assert isinstance(result["bugs"], list)
+    assert result["bugs"][0]["severity"] == "critical"
+
+
+def test_model_json_is_extracted_from_fenced_response():
+    result = safe_json_parse(
+        'Response:\n```json\n{"summary":"Valid","bugs":[],"improvements":[],"overall_score":8}\n```\n'
+    )
+    assert result["summary"] == "Valid"
+
+
+def test_non_python_complexity_is_explicitly_unsupported():
+    result = analyze_complexity("const value = 1;", "JavaScript")
+    assert result["status"] == "unsupported"
+
+
+def test_static_analysis_respects_positional_only_and_variadic_arguments():
+    code = """def collect(first, /, second=0, *extra, required, **options):
+    return first
+
+collect(1, required=2)
+collect(1, 2, 3, required=4, mode="fast")
+"""
+    assert analyze_static(code, "Python") == []
+
+    invalid = """def collect(first, /, required):
+    return first
+
+collect(required=1)
+collect(1, 2, 3)
+"""
+    assert analyze_static(invalid, "Python")
 
 
 @pytest.mark.parametrize(
