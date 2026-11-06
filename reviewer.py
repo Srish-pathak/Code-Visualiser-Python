@@ -19,7 +19,13 @@ from static_analysis import analyze_static
 from syntax_checker import check_syntax
 from utils import safe_json_parse
 
-DEEPSEEK_MODEL_NAME = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+# "deepseek-chat" was retired by DeepSeek on 2026-07-24; V4 Flash is its replacement.
+# Legacy names are mapped automatically so an old DEEPSEEK_MODEL setting keeps working.
+LEGACY_MODEL_ALIASES = {"deepseek-chat": "deepseek-v4-flash", "deepseek-reasoner": "deepseek-v4-flash"}
+_requested_model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip() or "deepseek-v4-flash"
+DEEPSEEK_MODEL_NAME = LEGACY_MODEL_ALIASES.get(_requested_model, _requested_model)
+# JSON-only reviews should not spend tokens on (or be broken by) thinking mode.
+DEEPSEEK_EXTRA_BODY = {"thinking": {"type": "disabled"}}
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 MAX_SOURCE_CHARACTERS = 40_000
 LOGGER = logging.getLogger(__name__)
@@ -152,10 +158,16 @@ def _provider_error_message(exc: Exception) -> tuple[str, str]:
             "{} rate limit or quota reached. Static analysis is still available.".format(provider_name),
             "rate_limited",
         )
-    if "insufficient balance" in lowered or "credit balance is not enough" in lowered:
+    if "insufficient balance" in lowered or "credit balance is not enough" in lowered or status == "402":
         return (
             "{} account has insufficient balance. Top up your DeepSeek balance and try again.".format(provider_name),
             "insufficient_balance",
+        )
+    if "model" in lowered and any(k in lowered for k in ("not exist", "not found", "invalid model")):
+        return (
+            "{} model '{}' is not available. Set DEEPSEEK_MODEL to deepseek-v4-flash or deepseek-v4-pro.".format(
+                provider_name, DEEPSEEK_MODEL_NAME),
+            "model_unavailable",
         )
     invalid_response = (
         ("empty" in lowered and "response" in lowered)
@@ -222,6 +234,7 @@ def _call_ai(code: str, language: str, file_name: str = "<input>", api_key: str 
                 temperature=0.2,
                 max_tokens=4000,
                 response_format={"type": "json_object"},
+                extra_body=DEEPSEEK_EXTRA_BODY,
             )
             break
         except Exception as exc:
@@ -249,6 +262,7 @@ def probe_deepseek_connectivity(api_key: str | None = None) -> dict[str, Any]:
             max_tokens=100,
             temperature=0,
             response_format={"type": "json_object"},
+            extra_body=DEEPSEEK_EXTRA_BODY,
         )
         content = response.choices[0].message.content
         if not isinstance(content, str) or not content.strip():
